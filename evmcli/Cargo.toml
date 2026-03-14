@@ -1,15 +1,15 @@
 [package]
-name = "evmcli"
+name = "onchain"
 version = "0.1.0"
 edition = "2021"
 description = "Fast EVM CLI toolkit — replaces slow MCP servers"
 
 [[bin]]
-name = "evmcli"
+name = "onchain"
 path = "src/main.rs"
 
 [lib]
-name = "evmcli"
+name = "onchain"
 path = "src/lib.rs"
 
 [dependencies]

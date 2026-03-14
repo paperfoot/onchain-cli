@@ -1,7 +1,7 @@
 use clap::Parser;
-use evmcli::cli::{Cli, Commands};
-use evmcli::context::AppContext;
-use evmcli::output::{self, OutputFormat};
+use onchain::cli::{Cli, Commands};
+use onchain::context::AppContext;
+use onchain::output::{self, OutputFormat};
 use std::process;
 use std::time::Instant;
 
@@ -22,7 +22,7 @@ async fn main() {
 
     // Handle examples command before building context (no RPC needed)
     if matches!(cli.command, Commands::Examples) {
-        println!("{}", evmcli::cli::EXAMPLES);
+        println!("{}", onchain::cli::EXAMPLES);
         return;
     }
 
@@ -36,69 +36,69 @@ async fn main() {
 
     let result = match cli.command {
         Commands::Balance { ref address, ref token } => {
-            evmcli::commands::balance::run(&ctx, address, token.as_deref()).await
+            onchain::commands::balance::run(&ctx, address, token.as_deref()).await
                 .map(|r| output::render(&r, format))
         }
         Commands::Tx { ref hash } => {
-            evmcli::commands::tx::run(&ctx, hash).await
+            onchain::commands::tx::run(&ctx, hash).await
                 .map(|r| output::render(&r, format))
         }
         Commands::Receipt { ref hash } => {
-            evmcli::commands::receipt::run(&ctx, hash).await
+            onchain::commands::receipt::run(&ctx, hash).await
                 .map(|r| output::render(&r, format))
         }
         Commands::Block { ref id } => {
-            evmcli::commands::block::run(&ctx, id).await
+            onchain::commands::block::run(&ctx, id).await
                 .map(|r| output::render(&r, format))
         }
         Commands::Gas => {
-            evmcli::commands::gas::run(&ctx).await
+            onchain::commands::gas::run(&ctx).await
                 .map(|r| output::render(&r, format))
         }
         Commands::Call { ref address, ref sig, ref args } => {
-            evmcli::commands::call::run(&ctx, address, sig, args).await
+            onchain::commands::call::run(&ctx, address, sig, args).await
                 .map(|r| output::render(&r, format))
         }
         Commands::Txs { ref address } => {
-            evmcli::commands::explorer::run(&ctx, address).await
+            onchain::commands::explorer::run(&ctx, address).await
                 .map(|r| output::render(&r, format))
         }
         Commands::Decode { ref data } => {
-            evmcli::commands::decode::run(&ctx, data).await
+            onchain::commands::decode::run(&ctx, data).await
                 .map(|r| output::render(&r, format))
         }
         Commands::Abi { ref address } => {
-            evmcli::commands::abi::run(&ctx, address).await
+            onchain::commands::abi::run(&ctx, address).await
                 .map(|r| output::render(&r, format))
         }
         Commands::Logs { ref address, ref topic0, ref participant, from_block, to_block, ref event } => {
-            evmcli::commands::logs::run(&ctx,
+            onchain::commands::logs::run(&ctx,
                 address.as_deref(), topic0.as_deref(), participant.as_deref(),
                 from_block, to_block, event.as_deref(),
             ).await.map(|r| output::render(&r, format))
         }
         Commands::Transfers { ref address, ref token_type } => {
-            evmcli::commands::transfers::run(&ctx, address, token_type).await
+            onchain::commands::transfers::run(&ctx, address, token_type).await
                 .map(|r| output::render(&r, format))
         }
         Commands::Storage { ref address, ref slot, block } => {
-            evmcli::commands::storage::run(&ctx, address, slot, block).await
+            onchain::commands::storage::run(&ctx, address, slot, block).await
                 .map(|r| output::render(&r, format))
         }
         Commands::Nonce { ref address } => {
-            evmcli::commands::nonce::run(&ctx, address).await
+            onchain::commands::nonce::run(&ctx, address).await
                 .map(|r| output::render(&r, format))
         }
         Commands::Code { ref address } => {
-            evmcli::commands::code::run(&ctx, address).await
+            onchain::commands::code::run(&ctx, address).await
                 .map(|r| output::render(&r, format))
         }
         Commands::Trace { ref hash } => {
-            evmcli::commands::trace::run(&ctx, hash).await
+            onchain::commands::trace::run(&ctx, hash).await
                 .map(|r| output::render(&r, format))
         }
         Commands::Bench { iterations, warmup, ref address } => {
-            evmcli::commands::bench::run(&ctx, iterations, warmup, address).await
+            onchain::commands::bench::run(&ctx, iterations, warmup, address).await
                 .map(|r| output::render(&r, format))
         }
         Commands::Examples => unreachable!(), // handled above

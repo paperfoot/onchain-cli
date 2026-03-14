@@ -121,7 +121,8 @@ fn format_token_value(raw: &str, decimals_str: &str) -> String {
     }
 }
 
-pub async fn run(ctx: &AppContext, address: &str, token_type: &str) -> Result<TransfersResult, EvmError> {
+pub async fn run(ctx: &AppContext, address: &str, _token_type: &str) -> Result<TransfersResult, EvmError> {
+    crate::errors::validate_address(address)?;
     let url = format!("{}/addresses/{}/token-transfers",
         ctx.chain.explorer_v2_url(), address);
 

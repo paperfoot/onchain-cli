@@ -99,7 +99,7 @@ async fn probe_rpc(http: &reqwest::Client, url: &str, expected_chain_id: u64, ti
 }
 
 fn cache_path(chain_id: u64) -> Option<PathBuf> {
-    ProjectDirs::from("", "", "evmcli").map(|dirs| {
+    ProjectDirs::from("", "", "onchain").map(|dirs| {
         dirs.cache_dir().join(format!("rpc_winner_{chain_id}"))
     })
 }

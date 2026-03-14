@@ -32,7 +32,7 @@ impl Tableable for AbiResult {
 }
 
 fn cache_dir(chain_id: u64) -> Option<PathBuf> {
-    ProjectDirs::from("", "", "evmcli").map(|dirs| {
+    ProjectDirs::from("", "", "onchain").map(|dirs| {
         dirs.cache_dir().join("abis").join(chain_id.to_string())
     })
 }
@@ -59,6 +59,7 @@ fn write_cached_abi(chain_id: u64, address: &str, abi: &serde_json::Value) -> Op
 }
 
 pub async fn run(ctx: &AppContext, address: &str) -> Result<AbiResult, EvmError> {
+    crate::errors::validate_address(address)?;
     // Check cache first
     if let Some((abi, path)) = read_cached_abi(ctx.chain.chain_id, address) {
         let (funcs, events) = count_abi_entries(&abi);

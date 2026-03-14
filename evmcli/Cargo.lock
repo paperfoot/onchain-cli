@@ -1662,26 +1662,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "evmcli"
-version = "0.1.0"
-dependencies = [
- "alloy",
- "clap",
- "comfy-table",
- "directories",
- "hex",
- "reqwest",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "toml",
- "tracing",
- "tracing-subscriber",
- "wiremock",
-]
-
-[[package]]
 name = "fastrand"
 version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2626,6 +2606,26 @@ name = "once_cell_polyfill"
 version = "1.70.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
+
+[[package]]
+name = "onchain"
+version = "0.1.0"
+dependencies = [
+ "alloy",
+ "clap",
+ "comfy-table",
+ "directories",
+ "hex",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "toml",
+ "tracing",
+ "tracing-subscriber",
+ "wiremock",
+]
 
 [[package]]
 name = "option-ext"

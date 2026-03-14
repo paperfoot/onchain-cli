@@ -81,6 +81,7 @@ impl Tableable for ExplorerResult {
 }
 
 pub async fn run(ctx: &AppContext, address: &str) -> Result<ExplorerResult, EvmError> {
+    crate::errors::validate_address(address)?;
     let url = format!("{}/addresses/{}/transactions",
         ctx.chain.explorer_v2_url(), address);
 

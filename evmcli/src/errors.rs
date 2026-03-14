@@ -82,3 +82,12 @@ impl From<alloy::contract::Error> for EvmError {
         Self::Rpc { code: "rpc.contract", message: e.to_string() }
     }
 }
+
+/// Validate an Ethereum address (0x + 40 hex chars)
+pub fn validate_address(addr: &str) -> Result<(), EvmError> {
+    let clean = addr.strip_prefix("0x").unwrap_or(addr);
+    if clean.len() != 40 || !clean.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(EvmError::validation(format!("Invalid address: {addr}. Expected 0x + 40 hex chars.")));
+    }
+    Ok(())
+}

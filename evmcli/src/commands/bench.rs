@@ -63,12 +63,23 @@ where
         let _ = f().await;
     }
 
-    // Benchmark
+    // Benchmark — only count successful operations
     let mut timings = Vec::with_capacity(iterations as usize);
+    let mut failures = 0u32;
     for _ in 0..iterations {
         let start = Instant::now();
-        let _ = f().await;
-        timings.push(start.elapsed().as_secs_f64() * 1000.0);
+        match f().await {
+            Ok(()) => timings.push(start.elapsed().as_secs_f64() * 1000.0),
+            Err(_) => failures += 1,
+        }
+    }
+
+    if timings.is_empty() {
+        return OpBench {
+            name: name.to_string(),
+            iterations,
+            mean_ms: 0.0, p50_ms: 0.0, p95_ms: 0.0, p99_ms: 0.0, min_ms: 0.0, max_ms: 0.0,
+        };
     }
 
     timings.sort_by(|a, b| a.partial_cmp(b).unwrap());
@@ -88,6 +99,9 @@ where
 }
 
 pub async fn run(ctx: &AppContext, iterations: u32, warmup: u32, address: &str) -> Result<BenchResult, EvmError> {
+    if iterations == 0 {
+        return Err(EvmError::validation("--iterations must be >= 1"));
+    }
     let addr: Address = address.parse()
         .map_err(|_| EvmError::validation(format!("Invalid address: {address}")))?;
 
