@@ -100,34 +100,63 @@ pub async fn run(ctx: &AppContext, hash: &str) -> Result<TraceResult, EvmError> 
     let _tx_hash: B256 = hash.parse()
         .map_err(|_| EvmError::validation(format!("Invalid tx hash: {hash}")))?;
 
-    // Try the current RPC first, then fallback to local node if it fails
-    let rpc_url = ctx.rpc_url.clone();
+    // Trace fallback chain:
+    // 1. Local node (fastest, ~128 blocks of state via SSH tunnel)
+    // 2. Alchemy archive (full history, any TX ever)
+    // Skip public RPCs entirely — they never have debug API.
     let local_rpc = ctx.chain.local_rpc.to_string();
+    let alchemy_rpc = std::env::var("ALCHEMY_ARB_RPC").ok();
 
-    match try_trace(&ctx.http, &rpc_url, hash).await {
+    // If user passed --rpc-url explicitly, try that first (they know what they're doing)
+    if ctx.rpc_url != ctx.chain.public_rpc {
+        if let Ok((trace_resp, used_rpc)) = try_trace(&ctx.http, &ctx.rpc_url, hash).await {
+            return parse_trace_response(trace_resp, hash, &used_rpc);
+        }
+    }
+
+    // Try local node first (fast, but limited to recent TXs)
+    eprintln!("Trying local node at {}...", local_rpc);
+    match try_trace(&ctx.http, &local_rpc, hash).await {
         Ok((trace_resp, used_rpc)) => {
             return parse_trace_response(trace_resp, hash, &used_rpc);
         }
-        Err(_) if rpc_url != local_rpc => {
-            // Primary RPC doesn't support trace — try local node (SSH tunnel)
-            eprintln!("Public RPC doesn't support trace. Trying local node at {}...", local_rpc);
-            match try_trace(&ctx.http, &local_rpc, hash).await {
-                Ok((trace_resp, used_rpc)) => {
-                    return parse_trace_response(trace_resp, hash, &used_rpc);
-                }
-                Err(_) => {
-                    return Err(EvmError::Rpc {
-                        code: "rpc.trace_unsupported",
-                        message: format!(
-                            "debug_traceTransaction not available. Tried:\n  1. {} (no debug API)\n  2. {} (not reachable — is SSH tunnel running?)\n\nFix: run 'ssh -fN mev' to start the tunnel to your EC2 archive node.",
-                            rpc_url, local_rpc
-                        ),
-                    });
-                }
+        Err(e) => {
+            let msg = e.to_string();
+            if msg.contains("too old") || msg.contains("reexec") {
+                eprintln!("  TX too old for local node (~128 blocks). Falling back to Alchemy archive...");
+            } else {
+                eprintln!("  Local node not reachable. Trying Alchemy archive...");
             }
         }
-        Err(e) => return Err(e),
     }
+
+    // Fall back to Alchemy (full archive — handles any TX)
+    if let Some(ref alch_url) = alchemy_rpc {
+        match try_trace(&ctx.http, alch_url, hash).await {
+            Ok((trace_resp, used_rpc)) => {
+                eprintln!("  Traced via Alchemy archive");
+                return parse_trace_response(trace_resp, hash, &used_rpc);
+            }
+            Err(e) => {
+                eprintln!("  Alchemy failed: {e}");
+            }
+        }
+    }
+
+    // All failed
+    let mut hints = vec![];
+    if alchemy_rpc.is_none() {
+        hints.push("Set ALCHEMY_ARB_RPC env var (full archive trace for any TX)");
+    }
+    hints.push("Run 'ssh -fN mev' to start SSH tunnel (fast trace for recent TXs)");
+
+    Err(EvmError::Rpc {
+        code: "rpc.trace_failed",
+        message: format!(
+            "Could not trace TX. Tried local node + Alchemy.\n\nFix:\n{}",
+            hints.iter().map(|h| format!("  - {h}")).collect::<Vec<_>>().join("\n")
+        ),
+    })
 }
 
 async fn try_trace(http: &reqwest::Client, rpc_url: &str, hash: &str) -> Result<(serde_json::Value, String), EvmError> {
