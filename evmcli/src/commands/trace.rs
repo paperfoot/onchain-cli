@@ -153,6 +153,16 @@ async fn try_trace(http: &reqwest::Client, rpc_url: &str, hash: &str) -> Result<
 
     if trace_resp.get("error").is_some() {
         let msg = trace_resp["error"]["message"].as_str().unwrap_or("unsupported");
+        if msg.contains("historical state unavailable") || msg.contains("reexec") {
+            return Err(EvmError::Rpc {
+                code: "rpc.state_too_old",
+                message: format!(
+                    "TX is too old to trace — node only keeps ~128 blocks of state. \
+                     Trace works for recent TXs (last ~2 min on Arbitrum). \
+                     For older TXs, the node needs --gcmode=archive or higher --init.reexec value."
+                ),
+            });
+        }
         return Err(EvmError::rpc(msg.to_string()));
     }
 
