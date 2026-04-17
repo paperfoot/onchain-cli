@@ -4,7 +4,7 @@
 
 **Query any EVM blockchain from your terminal. No browser, no wallet connect, no waiting.**
 
-[![Star this repo](https://img.shields.io/github/stars/199-biotechnologies/onchain-cli?style=for-the-badge&logo=github&label=%E2%AD%90%20Star%20this%20repo&color=yellow)](https://github.com/199-biotechnologies/onchain-cli/stargazers)
+[![Star this repo](https://img.shields.io/github/stars/paperfoot/onchain-cli?style=for-the-badge&logo=github&label=%E2%AD%90%20Star%20this%20repo&color=yellow)](https://github.com/paperfoot/onchain-cli/stargazers)
 [![Follow @longevityboris](https://img.shields.io/badge/Follow_%40longevityboris-000000?style=for-the-badge&logo=x&logoColor=white)](https://x.com/longevityboris)
 
 [![Rust](https://img.shields.io/badge/Rust-000000?style=for-the-badge&logo=rust&logoColor=white)](https://www.rust-lang.org/)
@@ -34,7 +34,7 @@ It was built for a specific workflow: investigating suspicious wallets, tracing 
 ### From source (recommended)
 
 ```bash
-git clone https://github.com/199-biotechnologies/onchain-cli.git
+git clone https://github.com/paperfoot/onchain-cli.git
 cd onchain-cli/evmcli
 cargo install --path .
 ```
@@ -181,7 +181,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 Built by [Boris Djordjevic](https://github.com/longevityboris) at [199 Biotechnologies](https://github.com/199-biotechnologies) | [Paperfoot AI](https://paperfoot.ai)
 
-[![Star this repo](https://img.shields.io/github/stars/199-biotechnologies/onchain-cli?style=for-the-badge&logo=github&label=%E2%AD%90%20Star%20this%20repo&color=yellow)](https://github.com/199-biotechnologies/onchain-cli/stargazers)
+[![Star this repo](https://img.shields.io/github/stars/paperfoot/onchain-cli?style=for-the-badge&logo=github&label=%E2%AD%90%20Star%20this%20repo&color=yellow)](https://github.com/paperfoot/onchain-cli/stargazers)
 [![Follow @longevityboris](https://img.shields.io/badge/Follow_%40longevityboris-000000?style=for-the-badge&logo=x&logoColor=white)](https://x.com/longevityboris)
 
 </div>

@@ -5,7 +5,7 @@ Thanks for your interest in contributing.
 ## Getting Started
 
 ```bash
-git clone https://github.com/199-biotechnologies/onchain-cli.git
+git clone https://github.com/paperfoot/onchain-cli.git
 cd onchain-cli/evmcli
 cargo build
 cargo test
