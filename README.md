@@ -22,6 +22,8 @@ onchain update
 
 Self-update uses this repository's releases, verifies the downloaded archive checksum, and never downgrades to an older version.
 
+Agent usage guidance is maintained in [skills/onchain/SKILL.md](skills/onchain/SKILL.md). To install it for Codex, copy that file to `~/.codex/skills/onchain/SKILL.md`.
+
 ## Zcash
 
 Zcash has its own native RPC commands. `--network` selects EVM networks; `--zcash-network` selects `mainnet`, `testnet`, or `regtest`.
