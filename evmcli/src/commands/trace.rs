@@ -34,11 +34,19 @@ impl Tableable for TraceResult {
         for call in &self.calls {
             let indent = "  ".repeat(call.depth);
             let from_short = if call.from.len() > 14 {
-                format!("{}...{}", &call.from[..8], &call.from[call.from.len()-4..])
-            } else { call.from.clone() };
+                format!(
+                    "{}...{}",
+                    &call.from[..8],
+                    &call.from[call.from.len() - 4..]
+                )
+            } else {
+                call.from.clone()
+            };
             let to_short = if call.to.len() > 14 {
-                format!("{}...{}", &call.to[..8], &call.to[call.to.len()-4..])
-            } else { call.to.clone() };
+                format!("{}...{}", &call.to[..8], &call.to[call.to.len() - 4..])
+            } else {
+                call.to.clone()
+            };
             table.add_row(vec![
                 &format!("{indent}{}", call.depth),
                 &call.call_type,
@@ -49,15 +57,17 @@ impl Tableable for TraceResult {
                 call.error.as_deref().unwrap_or(""),
             ]);
         }
-        table.add_row(vec![&format!("{} calls", self.call_count), "", "", "", "", "", ""]);
+        table.add_row(vec![
+            &format!("{} calls", self.call_count),
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+        ]);
         table
     }
-}
-
-// The debug_traceTransaction response structure
-#[derive(Debug, Deserialize)]
-struct DebugTraceResponse {
-    result: Option<TraceFrame>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -67,7 +77,6 @@ struct TraceFrame {
     from: Option<String>,
     to: Option<String>,
     value: Option<String>,
-    gas: Option<String>,
     #[serde(rename = "gasUsed")]
     gas_used: Option<String>,
     input: Option<String>,
@@ -79,13 +88,24 @@ struct TraceFrame {
 fn flatten_calls(frame: &TraceFrame, depth: usize, result: &mut Vec<TraceCall>) {
     result.push(TraceCall {
         depth,
-        call_type: frame.call_type.clone().unwrap_or_else(|| "CALL".to_string()),
+        call_type: frame
+            .call_type
+            .clone()
+            .unwrap_or_else(|| "CALL".to_string()),
         from: frame.from.clone().unwrap_or_default(),
         to: frame.to.clone().unwrap_or_default(),
         value: frame.value.clone().unwrap_or_else(|| "0x0".to_string()),
         gas_used: frame.gas_used.clone().unwrap_or_else(|| "0".to_string()),
-        input_size: frame.input.as_ref().map(|i| (i.len().saturating_sub(2)) / 2).unwrap_or(0),
-        output_size: frame.output.as_ref().map(|o| (o.len().saturating_sub(2)) / 2).unwrap_or(0),
+        input_size: frame
+            .input
+            .as_ref()
+            .map(|i| (i.len().saturating_sub(2)) / 2)
+            .unwrap_or(0),
+        output_size: frame
+            .output
+            .as_ref()
+            .map(|o| (o.len().saturating_sub(2)) / 2)
+            .unwrap_or(0),
         error: frame.error.clone(),
     });
 
@@ -97,69 +117,56 @@ fn flatten_calls(frame: &TraceFrame, depth: usize, result: &mut Vec<TraceCall>) 
 }
 
 pub async fn run(ctx: &AppContext, hash: &str) -> Result<TraceResult, EvmError> {
-    let _tx_hash: B256 = hash.parse()
+    let _tx_hash: B256 = hash
+        .parse()
         .map_err(|_| EvmError::validation(format!("Invalid tx hash: {hash}")))?;
 
-    // Trace fallback chain:
-    // 1. Local node (fastest, ~128 blocks of state via SSH tunnel)
-    // 2. Alchemy archive (full history, any TX ever)
-    // Skip public RPCs entirely — they never have debug API.
-    let local_rpc = ctx.chain.local_rpc.to_string();
-    let alchemy_rpc = std::env::var("ALCHEMY_ARB_RPC").ok();
-
-    // If user passed --rpc-url explicitly, try that first (they know what they're doing)
-    if ctx.rpc_url != ctx.chain.public_rpc {
-        if let Ok((trace_resp, used_rpc)) = try_trace(&ctx.http, &ctx.rpc_url, hash).await {
-            return parse_trace_response(trace_resp, hash, &used_rpc);
+    let mut endpoints = vec![ctx.rpc_url.clone()];
+    if !ctx.rpc_explicit {
+        let legacy_var = match ctx.chain.chain_id {
+            42161 => "ALCHEMY_ARB_RPC",
+            1 => "ALCHEMY_ETH_RPC",
+            8453 => "ALCHEMY_BASE_RPC",
+            10 => "ALCHEMY_OP_RPC",
+            137 => "ALCHEMY_POLYGON_RPC",
+            _ => "",
+        };
+        let archive = std::env::var("ONCHAIN_TRACE_RPC_URL")
+            .ok()
+            .or_else(|| std::env::var(legacy_var).ok());
+        if let Some(url) = archive {
+            endpoints.insert(0, url);
+        }
+        endpoints.push(ctx.chain.local_rpc.to_string());
+    }
+    let mut seen = std::collections::HashSet::new();
+    let mut errors = Vec::new();
+    for endpoint in endpoints {
+        if !seen.insert(endpoint.clone()) {
+            continue;
+        }
+        let label = crate::rpc::provider::endpoint_label(&endpoint);
+        let attempt = async {
+            crate::rpc::provider::validate_url(&endpoint)?;
+            crate::rpc::detect::probe_rpc(&ctx.http, &endpoint, ctx.chain.chain_id, 2000).await?;
+            let (response, _) = try_trace(&ctx.http, &endpoint, hash).await?;
+            parse_trace_response(response, hash, &endpoint)
+        }
+        .await;
+        match attempt {
+            Ok(result) => return Ok(result),
+            Err(error) => errors.push(format!("{label}: {error}")),
         }
     }
-
-    // Try local node first (fast, but limited to recent TXs)
-    eprintln!("Trying local node at {}...", local_rpc);
-    match try_trace(&ctx.http, &local_rpc, hash).await {
-        Ok((trace_resp, used_rpc)) => {
-            return parse_trace_response(trace_resp, hash, &used_rpc);
-        }
-        Err(e) => {
-            let msg = e.to_string();
-            if msg.contains("too old") || msg.contains("reexec") {
-                eprintln!("  TX too old for local node (~128 blocks). Falling back to Alchemy archive...");
-            } else {
-                eprintln!("  Local node not reachable. Trying Alchemy archive...");
-            }
-        }
-    }
-
-    // Fall back to Alchemy (full archive — handles any TX)
-    if let Some(ref alch_url) = alchemy_rpc {
-        match try_trace(&ctx.http, alch_url, hash).await {
-            Ok((trace_resp, used_rpc)) => {
-                eprintln!("  Traced via Alchemy archive");
-                return parse_trace_response(trace_resp, hash, &used_rpc);
-            }
-            Err(e) => {
-                eprintln!("  Alchemy failed: {e}");
-            }
-        }
-    }
-
-    // All failed
-    let mut hints = vec![];
-    if alchemy_rpc.is_none() {
-        hints.push("Set ALCHEMY_ARB_RPC env var (full archive trace for any TX)");
-    }
-    hints.push("Run 'ssh -fN mev' to start SSH tunnel (fast trace for recent TXs)");
-
-    Err(EvmError::Rpc {
-        code: "rpc.trace_failed",
-        message: format!(
-            "Could not trace TX. Tried local node + Alchemy.\n\nFix:\n{}",
-            hints.iter().map(|h| format!("  - {h}")).collect::<Vec<_>>().join("\n")
-        ),
-    })
+    Err(EvmError::Rpc { code: "rpc.trace_failed", message: format!(
+        "Trace failed. Use --rpc-url or ONCHAIN_TRACE_RPC_URL with debug_traceTransaction support for this network. {}", errors.join("; ")) })
 }
 
-async fn try_trace(http: &reqwest::Client, rpc_url: &str, hash: &str) -> Result<(serde_json::Value, String), EvmError> {
+async fn try_trace(
+    http: &reqwest::Client,
+    rpc_url: &str,
+    hash: &str,
+) -> Result<(serde_json::Value, String), EvmError> {
     let body = serde_json::json!({
         "jsonrpc": "2.0",
         "method": "debug_traceTransaction",
@@ -167,42 +174,52 @@ async fn try_trace(http: &reqwest::Client, rpc_url: &str, hash: &str) -> Result<
         "id": 1
     });
 
-    let resp = http.post(rpc_url)
+    let resp = http
+        .post(rpc_url)
         .json(&body)
         .send()
         .await
-        .map_err(|e| EvmError::rpc(format!("trace request to {} failed: {e}", rpc_url)))?;
+        .map_err(|e| EvmError::rpc(format!("trace request failed: {}", e.without_url())))?;
 
     if !resp.status().is_success() {
-        return Err(EvmError::rpc(format!("trace returned HTTP {}", resp.status())));
+        return Err(EvmError::rpc(format!(
+            "trace returned HTTP {}",
+            resp.status()
+        )));
     }
 
-    let trace_resp: serde_json::Value = resp.json().await
+    let trace_resp: serde_json::Value = resp
+        .json()
+        .await
         .map_err(|e| EvmError::rpc(format!("Failed to parse trace response: {e}")))?;
 
     if trace_resp.get("error").is_some() {
-        let msg = trace_resp["error"]["message"].as_str().unwrap_or("unsupported");
-        if msg.contains("historical state unavailable") || msg.contains("reexec") {
-            return Err(EvmError::Rpc {
-                code: "rpc.state_too_old",
-                message: format!(
-                    "TX is too old to trace — node only keeps ~128 blocks of state. \
-                     Trace works for recent TXs (last ~2 min on Arbitrum). \
-                     For older TXs, the node needs --gcmode=archive or higher --init.reexec value."
-                ),
-            });
-        }
+        let msg = trace_resp["error"]["message"]
+            .as_str()
+            .unwrap_or("unsupported");
         return Err(EvmError::rpc(msg.to_string()));
     }
 
     Ok((trace_resp, rpc_url.to_string()))
 }
 
-fn parse_trace_response(trace_resp: serde_json::Value, hash: &str, rpc_url: &str) -> Result<TraceResult, EvmError> {
-
+fn parse_trace_response(
+    trace_resp: serde_json::Value,
+    hash: &str,
+    rpc_url: &str,
+) -> Result<TraceResult, EvmError> {
+    if trace_resp["result"]["type"].as_str().is_none() {
+        return Err(EvmError::rpc(
+            "Missing callTracer result; the node may not support this tracer",
+        ));
+    }
     let frame: TraceFrame = serde_json::from_value(
-        trace_resp.get("result").cloned().unwrap_or(serde_json::Value::Null)
-    ).map_err(|e| EvmError::rpc(format!("Failed to parse trace frame: {e}")))?;
+        trace_resp
+            .get("result")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null),
+    )
+    .map_err(|e| EvmError::rpc(format!("Failed to parse trace frame: {e}")))?;
 
     let mut calls = Vec::new();
     flatten_calls(&frame, 0, &mut calls);
@@ -211,6 +228,6 @@ fn parse_trace_response(trace_resp: serde_json::Value, hash: &str, rpc_url: &str
         hash: hash.to_string(),
         call_count: calls.len(),
         calls,
-        rpc_endpoint: rpc_url.to_string(),
+        rpc_endpoint: crate::rpc::provider::endpoint_label(rpc_url),
     })
 }

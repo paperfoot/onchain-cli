@@ -1,187 +1,154 @@
-<div align="center">
-
 # onchain
 
-**Query any EVM blockchain from your terminal. No browser, no wallet connect, no waiting.**
-
-[![Star this repo](https://img.shields.io/github/stars/paperfoot/onchain-cli?style=for-the-badge&logo=github&label=%E2%AD%90%20Star%20this%20repo&color=yellow)](https://github.com/paperfoot/onchain-cli/stargazers)
-[![Follow @longevityboris](https://img.shields.io/badge/Follow_%40longevityboris-000000?style=for-the-badge&logo=x&logoColor=white)](https://x.com/longevityboris)
-
-[![Rust](https://img.shields.io/badge/Rust-000000?style=for-the-badge&logo=rust&logoColor=white)](https://www.rust-lang.org/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue?style=for-the-badge)](LICENSE)
-[![EVM Compatible](https://img.shields.io/badge/EVM-Compatible-3C3C3D?style=for-the-badge&logo=ethereum&logoColor=white)](https://ethereum.org/)
-
----
-
-A single binary that talks to EVM chains over RPC and Blockscout. Check balances, decode calldata, trace internal calls, pull transfer histories, read storage slots. Pipe everything to `jq`. Works on Arbitrum, Ethereum, Base, Optimism, and Polygon out of the box.
-
-[Install](#install) | [Quick Start](#quick-start) | [Commands](#commands) | [Networks](#supported-networks) | [Contributing](CONTRIBUTING.md)
-
-</div>
-
----
-
-## Why This Exists
-
-MCP servers for blockchain queries are slow. They spin up a runtime, negotiate a protocol handshake, and then make the same RPC call you could have made directly. For on-chain forensics and investigations where you need answers fast, that overhead adds up.
-
-`onchain` skips all of it. It is a compiled Rust binary that goes straight to the RPC endpoint. It uses happy-eyeballs probing to pick the fastest node (local or public) and caches the winner. Typical queries return in under 200ms.
-
-It was built for a specific workflow: investigating suspicious wallets, tracing fund flows, and decoding what smart contracts actually did. The forensic commands (`code`, `nonce`, `transfers`, `trace`) exist because those are the first things you check when you see a wallet doing something weird.
+A Rust CLI for EVM and native Zcash queries, transaction investigation, and cross-chain swap previews. JSON when piped, tables in a terminal. No background updater or wallet connection during ordinary queries.
 
 ## Install
 
-### From source (recommended)
+Download a macOS or Linux binary from [Releases](https://github.com/paperfoot/onchain-cli/releases), verify its archive against `SHA256SUMS`, and put `onchain` on your PATH. Releases include Apple Silicon, Intel Mac, Linux x86-64, and Linux ARM64 builds. Linux binaries target Ubuntu 24.04 or a compatible glibc runtime; build from source on older distributions.
 
-```bash
+From source, with Rust 1.94.1 or newer:
+
+```sh
 git clone https://github.com/paperfoot/onchain-cli.git
-cd onchain-cli/evmcli
-cargo install --path .
+cd onchain-cli
+cargo install --locked --path evmcli
+onchain --version
 ```
 
-### Self-update
-
-Once installed, the binary can update itself:
-
-```bash
+```sh
+onchain update --check
 onchain update
 ```
 
-## Quick Start
+Self-update uses this repository's releases, verifies the downloaded archive checksum, and never downgrades to an older version.
 
-```bash
-# Check a wallet balance on Arbitrum (default network)
-onchain balance 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045
+## Zcash
 
-# Check an ERC20 token balance
-onchain balance 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045 --token 0xaf88d065e77c8cC2239327C5EDb3A432268e5831
+Zcash has its own native RPC commands. `--network` selects EVM networks; `--zcash-network` selects `mainnet`, `testnet`, or `regtest`.
 
-# Get transaction details
-onchain tx 0xYOUR_TX_HASH
+```sh
+export ONCHAIN_ZCASH_RPC_URL=http://127.0.0.1:8232
+# For a Zebra node with cookie authentication:
+export ONCHAIN_ZCASH_COOKIE_FILE=/path/to/zebra/.cookie
 
-# Check gas prices
-onchain gas
+onchain zcash info
+onchain zcash health
+onchain zcash block latest
+onchain zcash balance t3dvVE3SQEi7kqNzwrfNePxZ1d4hUyztBA1
+onchain zcash utxos t3dvVE3SQEi7kqNzwrfNePxZ1d4hUyztBA1
+onchain zcash tx TRANSACTION_ID --block-hash BLOCK_HASH
+onchain zcash mempool
+onchain zcash bench --iterations 10
+```
 
-# Read a contract's owner
-onchain call 0xCONTRACT "owner()(address)"
+The example address above is the Zcash Foundation funding-stream address from the [Zebra documentation](https://zebra.zfnd.org/user/mining.html). Use your own address for your balances.
 
-# Query Ethereum instead of Arbitrum
+The default is a local node, port 8232 on mainnet or 18232 on testnet/regtest. Set `--zcash-rpc-url` or `ONCHAIN_ZCASH_RPC_URL` for another node; the global `--rpc-url`/`ONCHAIN_RPC_URL` is a fallback override. For authenticated nodes, use a cookie file or both `ONCHAIN_ZCASH_RPC_USER` and `ONCHAIN_ZCASH_RPC_PASSWORD`. Credentials require HTTPS unless the node is on loopback. Endpoint metadata and transport errors omit URL credentials, paths, and queries.
+
+Every online Zcash command checks the returned chain. Multiple reads and the network check share a single HTTP batch and a reused connection. Results are never cached. `--timeout-ms` bounds each complete HTTP request, including its body; the default is 10 seconds. `health` exits unsuccessfully if the node is unsynced, more than two blocks behind its reported target, or its tip is over ten minutes old. These thresholds are configurable.
+
+`balance` and `utxos` cover transparent addresses. Shielded balances require access to a wallet's notes or viewing keys; a public address alone is insufficient. The CLI currently provides node reads and swap previews. Wallet signing, shielded sends, and swap funding are not implemented. No private keys are accepted or exported. This release is a foundation for wallet/venue integration, not an automated trading bot.
+
+### Exact amounts and fees
+
+```sh
+onchain zcash amount 1.23456789
+# result.zatoshis = "123456789"
+onchain zcash fee --actions 2
+# result.fee_zatoshis = "10000"
+```
+
+ZEC conversions use integer arithmetic, reject sub-zatoshi precision, and enforce the monetary range. `fee` computes the [ZIP-317 conventional fee](https://zips.z.cash/zip-0317) for a supplied logical-action count; the wallet must determine that count and construct the transaction. It is not a live inclusion estimate.
+
+### Batched reads
+
+```json
+[
+  {"method":"getblockcount","params":[]},
+  {"method":"getmempoolinfo","params":[]}
+]
+```
+
+Save as `reads.json`, then run `onchain zcash batch reads.json`. Batches accept 1–100 allowlisted node reads, preserve request order even if responses arrive out of order, and fail on any RPC error, missing result, duplicate response ID, or network mismatch. Signing, broadcast, wallet exports, and administrative methods are rejected before connecting.
+
+## Swap previews
+
+The [NEAR Intents 1Click API](https://docs.near-intents.org/integration/distribution-channels/1click-api/about-1click-api) supplies supported assets, exact-input quote previews, and status for existing swaps.
+
+```sh
+onchain swap tokens --chain zec
+onchain swap tokens --symbol USDC
+# Take the exact destination assetId from the returned token list.
+onchain swap quote \
+  --from nep141:zec.omft.near \
+  --to DESTINATION_ASSET_ID \
+  --amount 100000000 \
+  --recipient YOUR_DESTINATION_ADDRESS \
+  --refund-to YOUR_ZCASH_ADDRESS \
+  --slippage-bps 100
+onchain swap status DEPOSIT_ADDRESS
+```
+
+`--amount` is always an integer in the origin asset's smallest units: `100000000` is 1 ZEC. Native ZEC is distinguished by `blockchain: "zec"`; symbols alone can also match bridged representations. All quotes set `dry: true`: they do not create deposit addresses or transfer funds. Responses retain the provider's complete quote, minimum output, fees, timestamp, and request echo. The CLI verifies the echoed assets, addresses, amount, deadline, and slippage before displaying a quote. A quote preview is not a reserved executable price.
+
+Set `ONCHAIN_SWAP_API_KEY` (X-API-Key) or `ONCHAIN_SWAP_JWT` (Bearer) for authenticated API access. The service may allow anonymous requests subject to its current policy. `--timeout-ms` defaults to 15 seconds. HTTP authentication/rate-limit errors are explicit; quotes are never silently retried or served from a cache. Use `--deposit-memo` when checking a memo-based deposit.
+
+## EVM
+
+```sh
 onchain --network ethereum balance 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045
-
-# Output as JSON and pipe to jq
-onchain balance 0xADDR --json | jq '.balance'
+onchain --network ethereum call 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2 'name()(string)'
+onchain --network base gas
+onchain --network arbitrum block latest
+onchain --network polygon gas --json
 ```
 
-## How It Works
+| Command | Purpose |
+|---|---|
+| `balance ADDRESS [--token CONTRACT]` | Native or ERC-20 balance; exact raw units and formatted amount |
+| `tx HASH`, `receipt HASH` | Transaction details and receipt |
+| `block [ID]` | Latest, block number/hash, or supported block tag |
+| `gas` | Gas price, base fee, optional priority fee; exact wei plus gwei display |
+| `call ADDRESS SIGNATURE [ARGS...]` | Read-only contract call with validated ABI; tuples and dynamic return values |
+| `decode CALLDATA [--sig SIGNATURE]` | Built-in selectors decoded offline; explicit signature validation; remote candidates for unknown selectors |
+| `abi ADDRESS` | Verified Blockscout ABI, cached for 24 hours |
+| `txs ADDRESS [--pages N]` | Recent transaction pages, with continuation cursor |
+| `transfers ADDRESS [--token-type erc20\|erc721\|erc1155] [--pages N]` | Typed transfer history, exact quantities and NFT IDs |
+| `logs` | Topic/event/address/block filters; participant matches topic1 OR topic2 |
+| `storage ADDRESS SLOT [--block NUMBER]` | Historical or latest 32-byte storage word, hex and decimal |
+| `nonce ADDRESS`, `code ADDRESS` | Nonce, bytecode, and EIP-7702 delegation detection |
+| `trace HASH` | Call-tracer output from a node with `debug_traceTransaction` support |
+| `bench [--iterations N]` | Measured RPC/explorer latency, success and failure counts |
+| `examples` | Investigation command examples |
 
-```
-onchain balance 0xADDR
-        |
-        v
-  +-----------+     +------------------+     +----------+
-  | CLI Parse | --> | RPC Auto-detect  | --> | Execute  |
-  | (clap)    |     | happy-eyeballs   |     | (alloy)  |
-  +-----------+     | local vs public  |     +----------+
-                    | 30s disk cache   |          |
-                    +------------------+          v
-                                            +----------+
-                                            | Render   |
-                                            | table or |
-                                            | JSON     |
-                                            +----------+
-```
+| Network | Chain ID |
+|---|---|
+| Arbitrum (default) | 42161 |
+| Ethereum | 1 |
+| Base | 8453 |
+| Optimism | 10 |
+| Polygon | 137 |
 
-1. **Parse** -- Clap handles argument parsing with strong types.
-2. **Detect** -- Happy-eyeballs probing races your local node (200ms timeout) against the public RPC (40ms delayed start). Winner gets cached to disk for 30 seconds.
-3. **Execute** -- Alloy makes the RPC call. Blockscout API handles explorer queries (transfers, transaction lists, ABI lookups).
-4. **Render** -- Output goes to a formatted table for humans, or JSON when piped or `--json` is passed.
+Use `--network` or `ONCHAIN_NETWORK`, and `--rpc-url` or `ONCHAIN_RPC_URL` for a custom node. Explicit RPCs are checked against the selected chain. Otherwise local and public endpoints race with bounded probes; a cached endpoint is revalidated before use. The probe and query reuse their HTTP connection. Explorer-only commands skip RPC discovery entirely. `--explorer-url`/`ONCHAIN_EXPLORER_URL` overrides the Blockscout base URL, including `/api`.
 
-## Commands
+`txs` and `transfers` default to one explorer page. `--pages` accepts 1–100; `next_page_params` indicates whether more data exists. These commands do not imply complete account history. Explorer failures are errors, not empty histories. Tracing depends on the node's tracing methods and retained history; a custom `--rpc-url` is honored exclusively. `ONCHAIN_TRACE_RPC_URL` supplies an optional fallback when no explicit RPC was given.
 
-| Command | What it does |
-|---------|-------------|
-| `balance <addr>` | Native token or ERC20 balance (use `--token`) |
-| `tx <hash>` | Transaction details (from, to, value, gas, input) |
-| `receipt <hash>` | Transaction receipt with status, gas used, logs count |
-| `block <id>` | Block details by number, hash, or `latest` |
-| `gas` | Current gas prices (base fee, priority fee) |
-| `call <addr> <sig>` | Read-only smart contract call (`eth_call`) |
-| `decode <calldata>` | Decode calldata using cached or fetched ABI |
-| `abi <addr>` | Fetch and cache a contract's ABI from Blockscout |
-| `logs` | Event logs with filters (`--event transfer`, `--participant`, block range) |
-| `transfers <addr>` | Token transfer history from Blockscout (ERC20/721/1155) |
-| `txs <addr>` | Transaction list from Blockscout explorer |
-| `storage <addr> <slot>` | Read raw storage slot value |
-| `nonce <addr>` | Transaction count (nonce) for an address |
-| `code <addr>` | Check if address is EOA or contract |
-| `trace <hash>` | Trace internal calls (auto-fallback to archive node) |
-| `bench` | Run RPC performance benchmark |
-| `update` | Self-update to latest release |
-| `examples` | Show investigation examples and forensic workflow |
+## Output and performance
 
-All commands accept `--network`, `--rpc-url`, and `--json` flags.
+Successful commands emit one JSON document when piped or when `--json` is set. Runtime errors emit `error` and `message` in JSON; diagnostics go to stderr. Exit codes: 0 success, 1 validation/explorer/decode failure, 2 configuration or CLI syntax error, 3 RPC failure. Help and CLI parser diagnostics use Clap's normal text output.
 
-## Forensic Workflow
+Benchmark your actual endpoint with `onchain bench` or `onchain zcash bench`. Benchmarks report measured successes/failures; an operation with no successful samples fails instead of reporting zero-millisecond latency. Latency depends on node location, method, load, and connection setup. No generic sub-200ms guarantee is made.
 
-Investigating a suspicious wallet follows a consistent pattern:
+## Development
 
-```bash
-# 1. Is it an EOA or a contract?
-onchain code 0xSUSPECT
-
-# 2. Fresh wallet? Low nonce = likely created for this purpose
-onchain nonce 0xSUSPECT
-
-# 3. Where did the funds come from?
-onchain transfers 0xSUSPECT
-
-# 4. Full transaction history
-onchain txs 0xSUSPECT
-
-# 5. Details of the key transaction
-onchain tx 0xSUSPICIOUS_TX_HASH
-
-# 6. What happened internally?
-onchain trace 0xSUSPICIOUS_TX_HASH
-
-# 7. Repeat for each funding source (multi-hop tracing)
+```sh
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo test --workspace --locked
+cargo build --release --locked
+cargo audit
 ```
 
-## Supported Networks
+Tests use local mock servers, including malformed/error replies, timeout boundaries, exact amounts, chain mismatches, historical reads, pagination, and quote integrity. CI runs these checks. Version tags publish four platform archives and `SHA256SUMS` after tests pass.
 
-| Network | Chain ID | Default |
-|---------|----------|---------|
-| Arbitrum | 42161 | Yes |
-| Ethereum | 1 | |
-| Base | 8453 | |
-| Optimism | 10 | |
-| Polygon | 137 | |
-
-Switch networks with `--network`:
-
-```bash
-onchain --network ethereum gas
-onchain --network base balance 0xADDR
-onchain --network 137 tx 0xHASH        # Chain ID also works
-```
-
-Use a custom RPC with `--rpc-url` or set the `ONCHAIN_RPC_URL` environment variable.
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
-
-## License
-
-[MIT](LICENSE)
-
----
-
-<div align="center">
-
-Built by [Boris Djordjevic](https://github.com/longevityboris) at [199 Biotechnologies](https://github.com/199-biotechnologies) | [Paperfoot AI](https://paperfoot.ai)
-
-[![Star this repo](https://img.shields.io/github/stars/paperfoot/onchain-cli?style=for-the-badge&logo=github&label=%E2%AD%90%20Star%20this%20repo&color=yellow)](https://github.com/paperfoot/onchain-cli/stargazers)
-[![Follow @longevityboris](https://img.shields.io/badge/Follow_%40longevityboris-000000?style=for-the-badge&logo=x&logoColor=white)](https://x.com/longevityboris)
-
-</div>
+See [CONTRIBUTING.md](CONTRIBUTING.md) and [CHANGELOG.md](CHANGELOG.md). Licensed under [MIT](LICENSE).

@@ -47,39 +47,63 @@ impl EvmError {
     }
 
     pub fn rpc(msg: impl Into<String>) -> Self {
-        Self::Rpc { code: "rpc.error", message: msg.into() }
+        Self::Rpc {
+            code: "rpc.error",
+            message: redact_urls(&msg.into()),
+        }
     }
 
     pub fn rpc_timeout(detail: impl Into<String>) -> Self {
-        Self::Rpc { code: "rpc.timeout", message: detail.into() }
+        Self::Rpc {
+            code: "rpc.timeout",
+            message: detail.into(),
+        }
     }
 
     pub fn config(msg: impl Into<String>) -> Self {
-        Self::Config { code: "config.error", message: msg.into() }
+        Self::Config {
+            code: "config.error",
+            message: redact_urls(&msg.into()),
+        }
     }
 
     pub fn explorer(msg: impl Into<String>) -> Self {
-        Self::Explorer { code: "explorer.error", message: msg.into() }
+        Self::Explorer {
+            code: "explorer.error",
+            message: redact_urls(&msg.into()),
+        }
     }
 
     pub fn validation(msg: impl Into<String>) -> Self {
-        Self::Validation { code: "validation.error", message: msg.into() }
+        Self::Validation {
+            code: "validation.error",
+            message: redact_urls(&msg.into()),
+        }
     }
 
     pub fn decode(msg: impl Into<String>) -> Self {
-        Self::Decode { code: "decode.error", message: msg.into() }
+        Self::Decode {
+            code: "decode.error",
+            message: redact_urls(&msg.into()),
+        }
     }
 }
 
 impl From<alloy::transports::TransportError> for EvmError {
     fn from(e: alloy::transports::TransportError) -> Self {
-        Self::Rpc { code: "rpc.transport", message: e.to_string() }
+        Self::Rpc {
+            code: "rpc.transport",
+            message: redact_urls(&e.to_string()),
+        }
     }
 }
 
 impl From<alloy::contract::Error> for EvmError {
     fn from(e: alloy::contract::Error) -> Self {
-        Self::Rpc { code: "rpc.contract", message: e.to_string() }
+        Self::Rpc {
+            code: "rpc.contract",
+            message: redact_urls(&e.to_string()),
+        }
     }
 }
 
@@ -87,7 +111,46 @@ impl From<alloy::contract::Error> for EvmError {
 pub fn validate_address(addr: &str) -> Result<(), EvmError> {
     let clean = addr.strip_prefix("0x").unwrap_or(addr);
     if clean.len() != 40 || !clean.chars().all(|c| c.is_ascii_hexdigit()) {
-        return Err(EvmError::validation(format!("Invalid address: {addr}. Expected 0x + 40 hex chars.")));
+        return Err(EvmError::validation(format!(
+            "Invalid address: {addr}. Expected 0x + 40 hex chars."
+        )));
     }
     Ok(())
+}
+
+/// Strip endpoint credentials from transport error messages as well as result metadata.
+fn redact_urls(message: &str) -> String {
+    let mut result = String::new();
+    let mut rest = message;
+    while let Some(start) = rest
+        .find("http://")
+        .into_iter()
+        .chain(rest.find("https://"))
+        .min()
+    {
+        result.push_str(&rest[..start]);
+        let url = &rest[start..];
+        let end = url
+            .find(|c: char| c.is_whitespace() || matches!(c, ')' | '\'' | '"' | '>'))
+            .unwrap_or(url.len());
+        result.push_str(&crate::rpc::provider::endpoint_label(&url[..end]));
+        rest = &url[end..];
+    }
+    result.push_str(rest);
+    result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn transport_errors_do_not_expose_rpc_keys() {
+        let error = EvmError::rpc(
+            "request for url (https://user:secret@rpc.example/v2/key?token=hidden) failed",
+        );
+        assert_eq!(
+            error.to_string(),
+            "RPC error: request for url (https://rpc.example) failed"
+        );
+    }
 }

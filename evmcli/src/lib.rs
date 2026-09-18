@@ -3,5 +3,8 @@ pub mod commands;
 pub mod config;
 pub mod context;
 pub mod errors;
+pub mod explorer;
 pub mod output;
 pub mod rpc;
+pub mod swap;
+pub mod zcash;

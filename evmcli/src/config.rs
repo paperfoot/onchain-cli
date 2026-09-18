@@ -61,7 +61,7 @@ pub const CHAINS: &[ChainConfig] = &[
     ChainConfig {
         name: "polygon",
         chain_id: 137,
-        public_rpc: "https://polygon-rpc.com",
+        public_rpc: "https://polygon.drpc.org",
         local_rpc: "http://127.0.0.1:8549",
         explorer_url: "polygon.blockscout.com",
         native_symbol: "POL",
@@ -80,6 +80,8 @@ pub fn resolve_chain(network: &str) -> Result<&'static ChainConfig, EvmError> {
             return Ok(chain);
         }
     }
-    Err(EvmError::config(format!("Unknown network: {network}. Supported: {}",
-        CHAINS.iter().map(|c| c.name).collect::<Vec<_>>().join(", "))))
+    Err(EvmError::config(format!(
+        "Unknown network: {network}. Supported: {}",
+        CHAINS.iter().map(|c| c.name).collect::<Vec<_>>().join(", ")
+    )))
 }

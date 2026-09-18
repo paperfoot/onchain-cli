@@ -45,28 +45,36 @@ impl Tableable for BalanceResult {
 }
 
 fn format_units(wei: U256, decimals: u8) -> String {
-    let divisor = U256::from(10u64).pow(U256::from(decimals));
-    let whole = wei / divisor;
-    let remainder = wei % divisor;
-
-    if remainder.is_zero() {
-        format!("{whole}")
+    let digits = wei.to_string();
+    if decimals == 0 {
+        return digits;
+    }
+    let padded = format!("{:0>width$}", digits, width = decimals as usize + 1);
+    let (whole, fraction) = padded.split_at(padded.len() - decimals as usize);
+    let fraction = fraction.trim_end_matches('0');
+    if fraction.is_empty() {
+        whole.to_string()
     } else {
-        let remainder_str = format!("{remainder}");
-        let padded = format!("{:0>width$}", remainder_str, width = decimals as usize);
-        let trimmed = padded.trim_end_matches('0');
-        format!("{whole}.{trimmed}")
+        format!("{whole}.{fraction}")
     }
 }
 
-pub async fn run(ctx: &AppContext, address: &str, token: Option<&str>) -> Result<BalanceResult, EvmError> {
-    let addr: Address = address.parse()
+pub async fn run(
+    ctx: &AppContext,
+    address: &str,
+    token: Option<&str>,
+) -> Result<BalanceResult, EvmError> {
+    let addr: Address = address
+        .parse()
         .map_err(|_| EvmError::validation(format!("Invalid address: {address}")))?;
 
     match token {
         None => {
             // Native ETH balance
-            let balance = ctx.provider.get_balance(addr).await
+            let balance = ctx
+                .provider
+                .get_balance(addr)
+                .await
                 .map_err(|e| EvmError::rpc(format!("get_balance failed: {e}")))?;
 
             Ok(BalanceResult {
@@ -76,12 +84,13 @@ pub async fn run(ctx: &AppContext, address: &str, token: Option<&str>) -> Result
                 symbol: ctx.chain.native_symbol.to_string(),
                 decimals: ctx.chain.native_decimals,
                 token_contract: None,
-                rpc_endpoint: ctx.rpc_url.clone(),
+                rpc_endpoint: crate::rpc::provider::endpoint_label(&ctx.rpc_url),
             })
         }
         Some(token_addr) => {
-            let token_address: Address = token_addr.parse()
-                .map_err(|_| EvmError::validation(format!("Invalid token address: {token_addr}")))?;
+            let token_address: Address = token_addr.parse().map_err(|_| {
+                EvmError::validation(format!("Invalid token address: {token_addr}"))
+            })?;
 
             let contract = IERC20::new(token_address, &ctx.provider);
 
@@ -96,9 +105,12 @@ pub async fn run(ctx: &AppContext, address: &str, token: Option<&str>) -> Result
                 symbol_call.call(),
             );
 
-            let balance = balance_res.map_err(|e| EvmError::rpc(format!("balanceOf failed: {e}")))?;
-            // Graceful fallback if symbol/decimals revert (non-standard tokens)
-            let decimals = decimals_res.unwrap_or(18);
+            let balance =
+                balance_res.map_err(|e| EvmError::rpc(format!("balanceOf failed: {e}")))?;
+            // Missing symbol can be displayed; guessing decimals would misstate the amount.
+            let decimals = decimals_res.map_err(|_| {
+                EvmError::rpc("Token decimals() failed; cannot safely format the balance")
+            })?;
             let symbol = symbol_res.unwrap_or_else(|_| "???".to_string());
 
             Ok(BalanceResult {
@@ -108,8 +120,21 @@ pub async fn run(ctx: &AppContext, address: &str, token: Option<&str>) -> Result
                 symbol,
                 decimals,
                 token_contract: Some(format!("{token_address}")),
-                rpc_endpoint: ctx.rpc_url.clone(),
+                rpc_endpoint: crate::rpc::provider::endpoint_label(&ctx.rpc_url),
             })
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn token_units_do_not_overflow() {
+        assert_eq!(format_units(U256::from(123400), 4), "12.34");
+        assert_eq!(format_units(U256::ZERO, 255), "0");
+        let formatted = format_units(U256::MAX, 255);
+        assert!(formatted.starts_with("0."));
+        assert_eq!(formatted.len(), 257);
     }
 }

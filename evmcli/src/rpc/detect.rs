@@ -17,13 +17,29 @@ pub async fn select_endpoint(
 ) -> Result<String, EvmError> {
     // 1. Explicit override
     if let Some(url) = rpc_override {
+        super::provider::validate_url(url)?;
+        probe_rpc(http, url, chain.chain_id, PUBLIC_PROBE_TIMEOUT_MS).await?;
         return Ok(url.to_string());
     }
 
     // 2. Check disk cache
     if let Some(cached) = read_cache(chain.chain_id) {
-        tracing::debug!("Using cached RPC endpoint: {cached}");
-        return Ok(cached);
+        if [chain.local_rpc, chain.public_rpc].contains(&cached.as_str())
+            && probe_rpc(
+                http,
+                &cached,
+                chain.chain_id,
+                if cached == chain.local_rpc {
+                    LOCAL_PROBE_TIMEOUT_MS
+                } else {
+                    PUBLIC_PROBE_TIMEOUT_MS
+                },
+            )
+            .await
+            .is_ok()
+        {
+            return Ok(cached);
+        }
     }
 
     // 3. Happy-eyeballs probe: race local vs public
@@ -33,75 +49,74 @@ pub async fn select_endpoint(
 }
 
 async fn probe_endpoints(chain: &ChainConfig, http: &reqwest::Client) -> Result<String, EvmError> {
-    let local_url = chain.local_rpc.to_string();
-    let public_url = chain.public_rpc.to_string();
-    let chain_id = chain.chain_id;
-
-    // Race: local (200ms timeout) vs public (40ms delayed start, 2s timeout)
-    let local_http = http.clone();
-    let local = local_url.clone();
-    let local_handle = tokio::spawn(async move {
-        probe_rpc(&local_http, &local, chain_id, LOCAL_PROBE_TIMEOUT_MS).await
-    });
-
-    let public_http = http.clone();
-    let public = public_url.clone();
-    let public_handle = tokio::spawn(async move {
-        // 40ms head start for local
+    let local = probe_rpc(
+        http,
+        chain.local_rpc,
+        chain.chain_id,
+        LOCAL_PROBE_TIMEOUT_MS,
+    );
+    let public = async {
         tokio::time::sleep(Duration::from_millis(40)).await;
-        probe_rpc(&public_http, &public, chain_id, PUBLIC_PROBE_TIMEOUT_MS).await
-    });
-
-    // Wait for both, pick the first success
-    let (local_res, public_res) = tokio::join!(local_handle, public_handle);
-
-    // Prefer local if it succeeded
-    if let Ok(Ok(())) = local_res {
-        tracing::info!("Using local RPC: {local_url}");
-        return Ok(local_url);
-    }
-
-    if let Ok(Ok(())) = public_res {
-        tracing::info!("Using public RPC: {public_url}");
-        return Ok(public_url);
-    }
-
-    Err(EvmError::rpc("All RPC endpoints failed"))
+        probe_rpc(
+            http,
+            chain.public_rpc,
+            chain.chain_id,
+            PUBLIC_PROBE_TIMEOUT_MS,
+        )
+        .await
+    };
+    tokio::pin!(local, public);
+    tokio::select! {
+        result = &mut local => {
+            if result.is_ok() { return Ok(chain.local_rpc.to_string()); }
+            public.await.map(|_| chain.public_rpc.to_string())
+        },
+        result = &mut public => {
+            if result.is_ok() { return Ok(chain.public_rpc.to_string()); }
+            local.await.map(|_| chain.local_rpc.to_string())
+        },
+    }.map_err(|_| EvmError::rpc("All RPC endpoints failed for the selected network; use --rpc-url to select another node"))
 }
 
-async fn probe_rpc(http: &reqwest::Client, url: &str, expected_chain_id: u64, timeout_ms: u64) -> Result<(), ()> {
-    let body = serde_json::json!({
-        "jsonrpc": "2.0",
-        "method": "eth_chainId",
-        "params": [],
-        "id": 1
-    });
-
-    let result = timeout(
-        Duration::from_millis(timeout_ms),
-        http.post(url).json(&body).send(),
-    ).await;
-
-    match result {
-        Ok(Ok(resp)) => {
-            if let Ok(json) = resp.json::<serde_json::Value>().await {
-                if let Some(hex_id) = json["result"].as_str() {
-                    let chain_id = u64::from_str_radix(hex_id.trim_start_matches("0x"), 16).unwrap_or(0);
-                    if chain_id == expected_chain_id {
-                        return Ok(());
-                    }
-                }
-            }
-            Err(())
+pub async fn probe_rpc(
+    http: &reqwest::Client,
+    url: &str,
+    expected_chain_id: u64,
+    timeout_ms: u64,
+) -> Result<(), EvmError> {
+    let request = async {
+        let response = http
+            .post(url)
+            .json(&serde_json::json!({
+                "jsonrpc": "2.0", "method": "eth_chainId", "params": [], "id": 1
+            }))
+            .send()
+            .await
+            .map_err(|e| EvmError::rpc(e.without_url().to_string()))?
+            .error_for_status()
+            .map_err(|e| EvmError::rpc(e.without_url().to_string()))?;
+        let json: serde_json::Value = response
+            .json()
+            .await
+            .map_err(|e| EvmError::rpc(e.without_url().to_string()))?;
+        let chain_id = json["result"]
+            .as_str()
+            .and_then(|s| s.strip_prefix("0x"))
+            .and_then(|s| u64::from_str_radix(s, 16).ok())
+            .ok_or_else(|| EvmError::rpc("Invalid eth_chainId response"))?;
+        if chain_id != expected_chain_id {
+            return Err(EvmError::config(format!("RPC chain ID {chain_id} does not match selected network {expected_chain_id}; set --network correctly")));
         }
-        _ => Err(()),
-    }
+        Ok(())
+    };
+    timeout(Duration::from_millis(timeout_ms), request)
+        .await
+        .map_err(|_| EvmError::rpc_timeout("RPC chain check timed out"))?
 }
 
 fn cache_path(chain_id: u64) -> Option<PathBuf> {
-    ProjectDirs::from("", "", "onchain").map(|dirs| {
-        dirs.cache_dir().join(format!("rpc_winner_{chain_id}"))
-    })
+    ProjectDirs::from("", "", "onchain")
+        .map(|dirs| dirs.cache_dir().join(format!("rpc_winner_{chain_id}")))
 }
 
 fn read_cache(chain_id: u64) -> Option<String> {

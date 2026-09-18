@@ -32,7 +32,7 @@ pub struct LogEntry {
     pub event_name: Option<String>,
     pub topics: Vec<String>,
     pub data_hex: String,
-    pub log_index: u32,
+    pub log_index: u64,
 }
 
 impl Tableable for LogsResult {
@@ -41,18 +41,38 @@ impl Tableable for LogsResult {
         table.set_header(vec!["Block", "TX", "Event", "Contract", "Data"]);
         for log in &self.logs {
             let tx_short = if log.tx_hash.len() > 14 {
-                format!("{}...{}", &log.tx_hash[..8], &log.tx_hash[log.tx_hash.len()-4..])
-            } else { log.tx_hash.clone() };
+                format!(
+                    "{}...{}",
+                    &log.tx_hash[..8],
+                    &log.tx_hash[log.tx_hash.len() - 4..]
+                )
+            } else {
+                log.tx_hash.clone()
+            };
             let addr_short = if log.address.len() > 14 {
-                format!("{}...{}", &log.address[..8], &log.address[log.address.len()-4..])
-            } else { log.address.clone() };
+                format!(
+                    "{}...{}",
+                    &log.address[..8],
+                    &log.address[log.address.len() - 4..]
+                )
+            } else {
+                log.address.clone()
+            };
             let data_short = if log.data_hex.len() > 20 {
-                format!("{}... ({} bytes)", &log.data_hex[..18], (log.data_hex.len()-2)/2)
-            } else { log.data_hex.clone() };
+                format!(
+                    "{}... ({} bytes)",
+                    &log.data_hex[..18],
+                    (log.data_hex.len() - 2) / 2
+                )
+            } else {
+                log.data_hex.clone()
+            };
             table.add_row(vec![
                 &log.block_number.to_string(),
                 &tx_short,
-                log.event_name.as_deref().unwrap_or(&log.topic0[..10]),
+                log.event_name
+                    .as_deref()
+                    .unwrap_or_else(|| log.topic0.get(..10).unwrap_or(&log.topic0)),
                 &addr_short,
                 &data_short,
             ]);
@@ -62,7 +82,7 @@ impl Tableable for LogsResult {
     }
 }
 
-fn resolve_event_topic(event: &str) -> Result<String, EvmError> {
+pub fn resolve_event_topic(event: &str) -> Result<String, EvmError> {
     match event.to_lowercase().as_str() {
         "transfer" => Ok(TRANSFER_TOPIC.to_string()),
         "approval" | "approve" => Ok(APPROVAL_TOPIC.to_string()),
@@ -93,28 +113,43 @@ pub async fn run(
     to_block: Option<u64>,
     event: Option<&str>,
 ) -> Result<LogsResult, EvmError> {
-    let latest = ctx.provider.get_block_number().await
-        .map_err(|e| EvmError::rpc(format!("get_block_number failed: {e}")))?;
-
-    let end_block = to_block.unwrap_or(latest);
+    let end_block = match to_block {
+        Some(number) => number,
+        None => ctx
+            .provider
+            .get_block_number()
+            .await
+            .map_err(|e| EvmError::rpc(e.to_string()))?,
+    };
     let start_block = from_block.unwrap_or(end_block.saturating_sub(1000));
+    if start_block > end_block {
+        return Err(EvmError::validation(
+            "--from-block must not exceed --to-block",
+        ));
+    }
 
     // Resolve topic0 from --event shorthand or --topic0
     let resolved_topic0: Option<B256> = if let Some(ev) = event {
         let topic_hex = resolve_event_topic(ev)?;
-        Some(topic_hex.parse().map_err(|_| EvmError::validation("Invalid topic hash"))?)
+        Some(
+            topic_hex
+                .parse()
+                .map_err(|_| EvmError::validation("Invalid topic hash"))?,
+        )
     } else if let Some(t) = topic0 {
-        Some(t.parse().map_err(|_| EvmError::validation(format!("Invalid topic0: {t}")))?)
+        Some(
+            t.parse()
+                .map_err(|_| EvmError::validation(format!("Invalid topic0: {t}")))?,
+        )
     } else {
         None
     };
 
-    let mut filter = Filter::new()
-        .from_block(start_block)
-        .to_block(end_block);
+    let mut filter = Filter::new().from_block(start_block).to_block(end_block);
 
     if let Some(addr_str) = address {
-        let addr: Address = addr_str.parse()
+        let addr: Address = addr_str
+            .parse()
             .map_err(|_| EvmError::validation(format!("Invalid address: {addr_str}")))?;
         filter = filter.address(addr);
     }
@@ -123,41 +158,70 @@ pub async fn run(
         filter = filter.event_signature(t0);
     }
 
-    // If participant specified, add as topic1 OR topic2 filter
-    if let Some(part) = participant {
-        let part_addr: Address = part.parse()
-            .map_err(|_| EvmError::validation(format!("Invalid participant address: {part}")))?;
-        let padded = B256::left_padding_from(part_addr.as_slice());
-        // Filter topic1 (from) — we can't OR with topic2 in a single filter,
-        // so we filter topic1 and the caller can do a second pass for topic2
-        filter = filter.topic1(padded);
-    }
-
-    let raw_logs = ctx.provider.get_logs(&filter).await
+    // JSON-RPC ORs values within a position, but ANDs different positions.
+    // Two queries are required to include both sent and received events.
+    let mut raw_logs = if let Some(part) = participant {
+        let addr: Address = part
+            .parse()
+            .map_err(|_| EvmError::validation("Invalid participant address"))?;
+        let padded = B256::left_padding_from(addr.as_slice());
+        let outgoing = filter.clone().topic1(padded);
+        let incoming = filter.clone().topic2(padded);
+        let (mut first, second) = tokio::try_join!(
+            ctx.provider.get_logs(&outgoing),
+            ctx.provider.get_logs(&incoming)
+        )
         .map_err(|e| EvmError::rpc(format!("get_logs failed: {e}")))?;
+        first.extend(second);
+        first
+    } else {
+        ctx.provider
+            .get_logs(&filter)
+            .await
+            .map_err(|e| EvmError::rpc(format!("get_logs failed: {e}")))?
+    };
+    raw_logs.sort_by_key(|log| (log.block_number, log.transaction_index, log.log_index));
+    raw_logs.dedup_by(|a, b| {
+        a.block_hash == b.block_hash
+            && a.transaction_hash == b.transaction_hash
+            && a.log_index == b.log_index
+    });
 
-    let logs: Vec<LogEntry> = raw_logs.iter().map(|log| {
-        let topic0_str = log.topics().first()
-            .map(|t| format!("{t}"))
-            .unwrap_or_default();
+    let logs: Vec<LogEntry> = raw_logs
+        .iter()
+        .map(|log| {
+            let topic0_str = log
+                .topics()
+                .first()
+                .map(|t| format!("{t}"))
+                .unwrap_or_default();
 
-        LogEntry {
-            address: format!("{}", log.address()),
-            block_number: log.block_number.unwrap_or(0),
-            tx_hash: log.transaction_hash.map(|h| format!("{h}")).unwrap_or_default(),
-            event_name: topic0_to_name(&topic0_str).map(|s| s.to_string()),
-            topic0: topic0_str,
-            topics: log.topics().iter().skip(1).map(|t| format!("{t}")).collect(),
-            data_hex: format!("0x{}", hex::encode(log.data().data.as_ref())),
-            log_index: log.log_index.unwrap_or(0) as u32,
-        }
-    }).collect();
+            LogEntry {
+                address: format!("{}", log.address()),
+                block_number: log.block_number.unwrap_or(0),
+                tx_hash: log
+                    .transaction_hash
+                    .map(|h| format!("{h}"))
+                    .unwrap_or_default(),
+                event_name: topic0_to_name(&topic0_str).map(|s| s.to_string()),
+                topic0: topic0_str,
+                topics: log
+                    .topics()
+                    .iter()
+                    .skip(1)
+                    .map(|t| format!("{t}"))
+                    .collect(),
+                data_hex: format!("0x{}", hex::encode(log.data().data.as_ref())),
+                log_index: log.log_index.unwrap_or(0),
+            }
+        })
+        .collect();
 
     Ok(LogsResult {
         log_count: logs.len(),
         from_block: start_block,
         to_block: end_block,
         logs,
-        rpc_endpoint: ctx.rpc_url.clone(),
+        rpc_endpoint: crate::rpc::provider::endpoint_label(&ctx.rpc_url),
     })
 }

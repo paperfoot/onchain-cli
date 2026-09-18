@@ -37,17 +37,8 @@ impl Tableable for BlockResult {
 }
 
 pub async fn run(ctx: &AppContext, id: &str) -> Result<BlockResult, EvmError> {
-    let block = if id == "latest" {
-        ctx.provider.get_block_by_number(BlockNumberOrTag::Latest).await
-    } else if let Ok(num) = id.parse::<u64>() {
-        ctx.provider.get_block_by_number(BlockNumberOrTag::Number(num)).await
-    } else if id.starts_with("0x") {
-        let hash: alloy::primitives::B256 = id.parse()
-            .map_err(|_| EvmError::validation(format!("Invalid block hash: {id}")))?;
-        ctx.provider.get_block_by_hash(hash).await
-    } else {
-        return Err(EvmError::validation(format!("Invalid block id: {id}. Use 'latest', a number, or 0x-prefixed hash")));
-    };
+    let id_parsed = parse_block_id(id)?;
+    let block = ctx.provider.get_block(id_parsed).await;
 
     let block = block
         .map_err(|e| EvmError::rpc(format!("get_block failed: {e}")))?
@@ -63,6 +54,20 @@ pub async fn run(ctx: &AppContext, id: &str) -> Result<BlockResult, EvmError> {
         gas_limit: header.gas_limit.to_string(),
         base_fee: header.base_fee_per_gas.map(|f| format!("{f}")),
         tx_count: block.transactions.len(),
-        rpc_endpoint: ctx.rpc_url.clone(),
+        rpc_endpoint: crate::rpc::provider::endpoint_label(&ctx.rpc_url),
     })
+}
+
+pub fn parse_block_id(id: &str) -> Result<alloy::eips::BlockId, EvmError> {
+    if id.starts_with("0x") && id.len() == 66 {
+        return id
+            .parse::<alloy::primitives::B256>()
+            .map(Into::into)
+            .map_err(|_| EvmError::validation("Invalid block hash"));
+    }
+    if let Ok(number) = id.parse::<u64>() {
+        return Ok(alloy::eips::BlockId::number(number));
+    }
+    id.parse::<BlockNumberOrTag>().map(Into::into)
+        .map_err(|_| EvmError::validation("Invalid block: use a decimal/hex number, hash, latest, earliest, pending, safe or finalized"))
 }

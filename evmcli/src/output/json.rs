@@ -1,8 +1,8 @@
-use serde::Serialize;
 use crate::errors::EvmError;
+use serde::Serialize;
 
 pub fn render<T: Serialize>(value: &T) {
-    println!("{}", serde_json::to_string_pretty(value).unwrap());
+    write_json(value);
 }
 
 pub fn render_error(err: &EvmError) {
@@ -10,5 +10,15 @@ pub fn render_error(err: &EvmError) {
         "error": err.machine_code(),
         "message": err.to_string(),
     });
-    println!("{}", serde_json::to_string_pretty(&json).unwrap());
+    write_json(&json);
+}
+
+fn write_json<T: Serialize>(value: &T) {
+    match serde_json::to_string_pretty(value) {
+        Ok(json) => super::write_stdout(&json),
+        Err(error) => {
+            eprintln!("Error serializing JSON: {error}");
+            std::process::exit(1);
+        }
+    }
 }

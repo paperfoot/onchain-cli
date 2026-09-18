@@ -1,3 +1,4 @@
+use alloy::network::ReceiptResponse;
 use alloy::primitives::B256;
 use alloy::providers::Provider;
 use comfy_table::Table;
@@ -37,14 +38,22 @@ impl Tableable for ReceiptResult {
 }
 
 pub async fn run(ctx: &AppContext, hash: &str) -> Result<ReceiptResult, EvmError> {
-    let tx_hash: B256 = hash.parse()
+    let tx_hash: B256 = hash
+        .parse()
         .map_err(|_| EvmError::validation(format!("Invalid tx hash: {hash}")))?;
 
-    let receipt = ctx.provider.get_transaction_receipt(tx_hash).await
+    let receipt = ctx
+        .provider
+        .get_transaction_receipt(tx_hash)
+        .await
         .map_err(|e| EvmError::rpc(format!("get_receipt failed: {e}")))?
         .ok_or_else(|| EvmError::rpc(format!("Receipt not found for {hash}")))?;
 
-    let status = if receipt.status() { "success" } else { "reverted" };
+    let status = if receipt.status() {
+        "success"
+    } else {
+        "reverted"
+    };
 
     Ok(ReceiptResult {
         hash: format!("{tx_hash}"),
@@ -54,6 +63,6 @@ pub async fn run(ctx: &AppContext, hash: &str) -> Result<ReceiptResult, EvmError
         effective_gas_price: receipt.effective_gas_price.to_string(),
         logs_count: receipt.inner.logs().len(),
         contract_address: receipt.contract_address.map(|a| format!("{a}")),
-        rpc_endpoint: ctx.rpc_url.clone(),
+        rpc_endpoint: crate::rpc::provider::endpoint_label(&ctx.rpc_url),
     })
 }

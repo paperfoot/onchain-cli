@@ -23,77 +23,72 @@ impl Tableable for UpdateResult {
 }
 
 pub async fn run(check_only: bool) -> Result<UpdateResult, EvmError> {
-    let current = env!("CARGO_PKG_VERSION");
-
-    let status = self_update::backends::github::Update::configure()
-        .repo_owner("199-biotechnologies")
-        .repo_name("onchain-cli")
-        .bin_name("onchain")
-        .current_version(current)
-        .build()
-        .map_err(|e| EvmError::config(format!("Update check failed: {e}")))?;
-
-    let latest_release = status.get_latest_release()
-        .map_err(|e| EvmError::config(format!("Could not check for updates: {e}")))?;
-
-    let latest_version = latest_release.version.clone();
-    let is_newer = latest_version != current;
-
-    if !is_newer {
-        return Ok(UpdateResult {
-            current_version: current.to_string(),
-            latest_version,
-            updated: false,
-            message: "Already up to date".to_string(),
-        });
-    }
-
-    if check_only {
-        return Ok(UpdateResult {
-            current_version: current.to_string(),
-            latest_version,
-            updated: false,
-            message: format!("Update available! Run 'onchain update' to install."),
-        });
-    }
-
-    // Perform the update
-    let update_status = self_update::backends::github::Update::configure()
-        .repo_owner("199-biotechnologies")
-        .repo_name("onchain-cli")
-        .bin_name("onchain")
-        .current_version(current)
-        .build()
-        .map_err(|e| EvmError::config(format!("Update failed: {e}")))?
-        .update()
-        .map_err(|e| EvmError::config(format!("Update failed: {e}")))?;
-
-    Ok(UpdateResult {
-        current_version: current.to_string(),
-        latest_version: update_status.version().to_string(),
-        updated: true,
-        message: format!("Updated to {}", update_status.version()),
-    })
+    // The updater uses blocking HTTP; keep its runtime outside Tokio's async workers.
+    tokio::task::spawn_blocking(move || run_blocking(check_only))
+        .await
+        .map_err(|e| EvmError::config(format!("Updater failed: {e}")))?
 }
 
-/// Non-blocking version check — call on startup, print hint if update available.
-/// Returns None if check fails or no update (don't block the user).
-pub async fn check_for_update_hint() -> Option<String> {
-    let current = env!("CARGO_PKG_VERSION");
+fn newer(latest: &str, current: &str) -> Result<bool, EvmError> {
+    let parse = |value: &str| {
+        semver::Version::parse(value.trim_start_matches('v'))
+            .map_err(|_| EvmError::config("Release has an invalid version"))
+    };
+    Ok(parse(latest)? > parse(current)?)
+}
 
-    let status = self_update::backends::github::Update::configure()
-        .repo_owner("199-biotechnologies")
+fn run_blocking(check_only: bool) -> Result<UpdateResult, EvmError> {
+    let current = env!("CARGO_PKG_VERSION");
+    let updater = self_update::backends::github::Update::configure()
+        .repo_owner("paperfoot")
         .repo_name("onchain-cli")
         .bin_name("onchain")
         .current_version(current)
+        .unattended()
+        .checksum_from_asset("SHA256SUMS")
         .build()
-        .ok()?;
-
-    let latest = status.get_latest_release().ok()?;
-
-    if latest.version != current {
-        Some(format!("Update available: {} -> {} (run 'onchain update')", current, latest.version))
+        .map_err(|e| EvmError::config(format!("Update configuration failed: {e}")))?;
+    let releases = updater
+        .get_latest_release()
+        .map_err(|e| EvmError::config(format!("Could not check for updates: {e}")))?;
+    let latest = releases
+        .latest()
+        .ok_or_else(|| EvmError::config("No published releases found"))?;
+    let latest_version = latest.version().to_string();
+    let mut result = UpdateResult {
+        current_version: current.to_string(),
+        latest_version: latest_version.clone(),
+        updated: false,
+        message: "Already up to date".into(),
+    };
+    if !newer(&latest_version, current)? {
+        return Ok(result);
+    }
+    if check_only {
+        result.message = "Update available. Run 'onchain update' to install.".into();
+        return Ok(result);
+    }
+    let status = updater
+        .update()
+        .map_err(|e| EvmError::config(format!("Update failed: {e}")))?;
+    result.updated = status.is_updated();
+    result.latest_version = status.version().to_string();
+    result.message = if result.updated {
+        format!("Updated to {}", status.version())
     } else {
-        None
+        "Already up to date".into()
+    };
+    Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn updates_compare_semantic_versions_without_downgrades() {
+        assert!(newer("v0.10.0", "0.2.0").unwrap());
+        assert!(!newer("0.1.9", "0.2.0").unwrap());
+        assert!(!newer("v0.2.0", "0.2.0").unwrap());
+        assert!(newer("invalid", "0.2.0").is_err());
     }
 }

@@ -25,15 +25,19 @@ impl Tableable for NonceResult {
 }
 
 pub async fn run(ctx: &AppContext, address: &str) -> Result<NonceResult, EvmError> {
-    let addr: Address = address.parse()
+    let addr: Address = address
+        .parse()
         .map_err(|_| EvmError::validation(format!("Invalid address: {address}")))?;
 
-    let nonce = ctx.provider.get_transaction_count(addr).await
+    let nonce = ctx
+        .provider
+        .get_transaction_count(addr)
+        .await
         .map_err(|e| EvmError::rpc(format!("get_transaction_count failed: {e}")))?;
 
     Ok(NonceResult {
         address: format!("{addr}"),
         nonce,
-        rpc_endpoint: ctx.rpc_url.clone(),
+        rpc_endpoint: crate::rpc::provider::endpoint_label(&ctx.rpc_url),
     })
 }

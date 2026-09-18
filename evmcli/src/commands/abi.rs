@@ -32,21 +32,36 @@ impl Tableable for AbiResult {
 }
 
 fn cache_dir(chain_id: u64) -> Option<PathBuf> {
-    ProjectDirs::from("", "", "onchain").map(|dirs| {
-        dirs.cache_dir().join("abis").join(chain_id.to_string())
-    })
+    ProjectDirs::from("", "", "onchain")
+        .map(|dirs| dirs.cache_dir().join("abis").join(chain_id.to_string()))
 }
 
 fn sanitize_address(address: &str) -> String {
     // Only allow hex chars and 0x prefix — prevent path traversal
-    address.chars().filter(|c| c.is_ascii_hexdigit() || *c == 'x' || *c == 'X').collect::<String>().to_lowercase()
+    address
+        .chars()
+        .filter(|c| c.is_ascii_hexdigit() || *c == 'x' || *c == 'X')
+        .collect::<String>()
+        .to_lowercase()
 }
 
 fn read_cached_abi(chain_id: u64, address: &str) -> Option<(serde_json::Value, PathBuf)> {
     let dir = cache_dir(chain_id)?;
     let path = dir.join(format!("{}.json", sanitize_address(address)));
+    let age = std::fs::metadata(&path)
+        .ok()?
+        .modified()
+        .ok()?
+        .elapsed()
+        .ok()?;
+    if age > std::time::Duration::from_secs(86400) {
+        return None;
+    }
     let content = std::fs::read_to_string(&path).ok()?;
     let abi: serde_json::Value = serde_json::from_str(&content).ok()?;
+    if !abi.is_array() || serde_json::from_value::<alloy::json_abi::JsonAbi>(abi.clone()).is_err() {
+        return None;
+    }
     Some((abi, path))
 }
 
@@ -61,7 +76,12 @@ fn write_cached_abi(chain_id: u64, address: &str, abi: &serde_json::Value) -> Op
 pub async fn run(ctx: &AppContext, address: &str) -> Result<AbiResult, EvmError> {
     crate::errors::validate_address(address)?;
     // Check cache first
-    if let Some((abi, path)) = read_cached_abi(ctx.chain.chain_id, address) {
+    if let Some((abi, path)) = ctx
+        .explorer_override
+        .is_none()
+        .then(|| read_cached_abi(ctx.chain.chain_id, address))
+        .flatten()
+    {
         let (funcs, events) = count_abi_entries(&abi);
         return Ok(AbiResult {
             address: address.to_string(),
@@ -73,29 +93,36 @@ pub async fn run(ctx: &AppContext, address: &str) -> Result<AbiResult, EvmError>
         });
     }
 
-    // Fetch from Blockscout (explorer_api_url already ends with /api)
-    let url = format!("{}?module=contract&action=getabi&address={}",
-        ctx.chain.explorer_api_url(), address);
-
-    let resp = ctx.http.get(&url).send().await
-        .map_err(|e| EvmError::explorer(format!("ABI fetch failed: {e}")))?;
-
-    let json: serde_json::Value = resp.json().await
-        .map_err(|e| EvmError::explorer(format!("ABI parse failed: {e}")))?;
-
-    let abi_str = json["result"].as_str()
+    let url = format!("{}/smart-contracts/{address}", ctx.explorer_v2_url());
+    let response = ctx
+        .http
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| EvmError::explorer(e.without_url().to_string()))?
+        .error_for_status()
+        .map_err(|e| EvmError::explorer(e.without_url().to_string()))?;
+    let json: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| EvmError::explorer(format!("Invalid contract response: {e}")))?;
+    let abi = json
+        .get("abi")
+        .filter(|v| v.is_array())
+        .cloned()
         .ok_or_else(|| EvmError::Abi {
             code: "abi.not_found",
-            message: format!("No ABI found for {address}. Contract may not be verified."),
+            message: format!("No verified ABI found for {address}"),
         })?;
-
-    let abi: serde_json::Value = serde_json::from_str(abi_str)
-        .map_err(|e| EvmError::Abi {
-            code: "abi.parse_error",
-            message: format!("Failed to parse ABI: {e}"),
-        })?;
-
-    let cache_path = write_cached_abi(ctx.chain.chain_id, address, &abi);
+    serde_json::from_value::<alloy::json_abi::JsonAbi>(abi.clone()).map_err(|e| EvmError::Abi {
+        code: "abi.parse_error",
+        message: format!("Invalid ABI: {e}"),
+    })?;
+    let cache_path = if ctx.explorer_override.is_none() {
+        write_cached_abi(ctx.chain.chain_id, address, &abi)
+    } else {
+        None
+    };
     let (funcs, events) = count_abi_entries(&abi);
 
     Ok(AbiResult {
@@ -113,7 +140,13 @@ fn count_abi_entries(abi: &serde_json::Value) -> (usize, usize) {
         Some(a) => a,
         None => return (0, 0),
     };
-    let funcs = arr.iter().filter(|e| e["type"].as_str() == Some("function")).count();
-    let events = arr.iter().filter(|e| e["type"].as_str() == Some("event")).count();
+    let funcs = arr
+        .iter()
+        .filter(|e| e["type"].as_str() == Some("function"))
+        .count();
+    let events = arr
+        .iter()
+        .filter(|e| e["type"].as_str() == Some("event"))
+        .count();
     (funcs, events)
 }

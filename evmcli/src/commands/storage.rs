@@ -32,29 +32,37 @@ impl Tableable for StorageResult {
     }
 }
 
-pub async fn run(ctx: &AppContext, address: &str, slot: &str, block: Option<u64>) -> Result<StorageResult, EvmError> {
-    let addr: Address = address.parse()
+pub async fn run(
+    ctx: &AppContext,
+    address: &str,
+    slot: &str,
+    block: Option<u64>,
+) -> Result<StorageResult, EvmError> {
+    let addr: Address = address
+        .parse()
         .map_err(|_| EvmError::validation(format!("Invalid address: {address}")))?;
 
-    let slot_u256: U256 = if slot.starts_with("0x") {
-        U256::from_str_radix(&slot[2..], 16)
+    let slot_u256: U256 = if let Some(hex) = slot.strip_prefix("0x") {
+        U256::from_str_radix(hex, 16)
             .map_err(|_| EvmError::validation(format!("Invalid slot: {slot}")))?
     } else {
         slot.parse::<U256>()
             .map_err(|_| EvmError::validation(format!("Invalid slot: {slot}")))?
     };
 
-    let value = ctx.provider.get_storage_at(addr, slot_u256).await
+    let value = ctx
+        .provider
+        .get_storage_at(addr, slot_u256)
+        .block_id(block.map(alloy::eips::BlockId::number).unwrap_or_default())
+        .await
         .map_err(|e| EvmError::rpc(format!("get_storage_at failed: {e}")))?;
-
-    let value_u256 = value.to_string().parse::<U256>().unwrap_or(U256::ZERO);
 
     Ok(StorageResult {
         address: format!("{addr}"),
         slot: format!("{slot_u256:#x}"),
-        value: format!("{value}"),
-        value_decimal: value_u256.to_string(),
+        value: format!("{value:#066x}"),
+        value_decimal: value.to_string(),
         block,
-        rpc_endpoint: ctx.rpc_url.clone(),
+        rpc_endpoint: crate::rpc::provider::endpoint_label(&ctx.rpc_url),
     })
 }

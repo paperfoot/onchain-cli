@@ -1,51 +1,30 @@
-# Contributing to onchain
+# Contributing
 
-Thanks for your interest in contributing.
+The root is a Cargo workspace; `evmcli/` contains the `onchain` library and binary. Rust 1.94.1 or newer is required. Run all checks from the repository root:
 
-## Getting Started
-
-```bash
-git clone https://github.com/paperfoot/onchain-cli.git
-cd onchain-cli/evmcli
-cargo build
-cargo test
+```sh
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo test --workspace --locked
+cargo build --release --locked
+cargo audit
 ```
 
-## Development
+Code map:
 
-The project uses a Cargo workspace. The main binary lives in `evmcli/`.
+- `evmcli/src/cli.rs`: EVM/global commands.
+- `evmcli/src/commands/`: EVM query implementations and updater.
+- `evmcli/src/rpc/`: endpoint discovery and pooled HTTP provider.
+- `evmcli/src/explorer.rs`: bounded Blockscout pagination.
+- `evmcli/src/zcash/`: native Zcash CLI, exact amounts, health checks, validated RPC batches.
+- `evmcli/src/swap.rs`: 1Click asset discovery, dry quotes, and status.
+- `evmcli/src/output/`: terminal tables and machine-readable JSON.
+- `evmcli/tests/`: mock HTTP regression tests.
 
-- `evmcli/src/cli.rs` -- Command definitions (clap derive)
-- `evmcli/src/commands/` -- One file per command
-- `evmcli/src/rpc/` -- RPC endpoint detection and provider setup
-- `evmcli/src/output/` -- Table and JSON rendering
-- `evmcli/src/config.rs` -- Chain configurations
+Keep amounts exact; use integer base units or decimal strings. Never guess token decimals, substitute zero on network errors, or cache balances and quotes. Keep credentials out of output. A public chain query cannot reveal a shielded wallet balance.
 
-### Adding a New Command
+Tests must run without production credentials or real funds. Use Wiremock for response schemas, errors, and request verification. Live smoke tests are read-only and explicitly separate from deterministic CI.
 
-1. Add the variant to `Commands` in `cli.rs`
-2. Create `commands/your_command.rs`
-3. Register the module in `commands/mod.rs`
-4. Wire it up in `main.rs`
+To release, update `evmcli/Cargo.toml`, regenerate the workspace lockfile, document the changes, pass all checks, push main, and tag that tested commit `v<version>`. The release workflow checks the version, tests/builds on native macOS and Linux runners, publishes archives, and generates checksums. Verify the published archives and self-update behavior before declaring the release installed.
 
-### Adding a New Network
-
-Add a `ChainConfig` entry to the `CHAINS` array in `config.rs`.
-
-## Pull Requests
-
-- Keep PRs focused on a single change
-- Run `cargo clippy` and `cargo test` before submitting
-- Use conventional commit messages (`feat:`, `fix:`, `chore:`)
-
-## Reporting Issues
-
-Open an issue on GitHub with:
-- What you ran
-- What you expected
-- What happened instead
-- Your OS and Rust version (`rustc --version`)
-
-## License
-
-By contributing, you agree that your contributions will be licensed under the MIT License.
+Open issues with the exact command (redact credentials), expected/observed behavior, `onchain --version`, and OS. Do not include wallet secrets or API tokens.

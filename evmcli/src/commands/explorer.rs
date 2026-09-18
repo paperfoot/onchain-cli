@@ -5,15 +5,10 @@ use crate::context::AppContext;
 use crate::errors::EvmError;
 use crate::output::table::Tableable;
 
-#[derive(Debug, Deserialize)]
-struct BlockscoutResponse {
-    items: Vec<BlockscoutTx>,
-}
-
 #[derive(Debug, Deserialize, Serialize, Clone)]
 struct BlockscoutTx {
     hash: String,
-    #[serde(default)]
+    #[serde(default, alias = "block_number")]
     block: Option<u64>,
     timestamp: Option<String>,
     from: Option<BlockscoutAddr>,
@@ -36,6 +31,8 @@ pub struct ExplorerResult {
     pub tx_count: usize,
     pub transactions: Vec<TxSummary>,
     pub explorer_url: String,
+    pub pages_fetched: u32,
+    pub next_page_params: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Serialize)]
@@ -46,6 +43,7 @@ pub struct TxSummary {
     pub from: String,
     pub to: String,
     pub status: String,
+    pub value: Option<String>,
 }
 
 impl Tableable for ExplorerResult {
@@ -54,17 +52,17 @@ impl Tableable for ExplorerResult {
         table.set_header(vec!["Hash", "Block", "From", "To", "Status"]);
         for tx in &self.transactions {
             let hash_short = if tx.hash.len() > 14 {
-                format!("{}...{}", &tx.hash[..8], &tx.hash[tx.hash.len()-6..])
+                format!("{}...{}", &tx.hash[..8], &tx.hash[tx.hash.len() - 6..])
             } else {
                 tx.hash.clone()
             };
             let from_short = if tx.from.len() > 14 {
-                format!("{}...{}", &tx.from[..8], &tx.from[tx.from.len()-4..])
+                format!("{}...{}", &tx.from[..8], &tx.from[tx.from.len() - 4..])
             } else {
                 tx.from.clone()
             };
             let to_short = if tx.to.len() > 14 {
-                format!("{}...{}", &tx.to[..8], &tx.to[tx.to.len()-4..])
+                format!("{}...{}", &tx.to[..8], &tx.to[tx.to.len() - 4..])
             } else {
                 tx.to.clone()
             };
@@ -80,36 +78,53 @@ impl Tableable for ExplorerResult {
     }
 }
 
-pub async fn run(ctx: &AppContext, address: &str) -> Result<ExplorerResult, EvmError> {
+pub async fn run(
+    ctx: &AppContext,
+    address: &str,
+    max_pages: u32,
+) -> Result<ExplorerResult, EvmError> {
     crate::errors::validate_address(address)?;
-    let url = format!("{}/addresses/{}/transactions",
-        ctx.chain.explorer_v2_url(), address);
+    let url = format!(
+        "{}/addresses/{}/transactions",
+        ctx.explorer_v2_url(),
+        address
+    );
 
-    let resp = ctx.http.get(&url).send().await
-        .map_err(|e| EvmError::explorer(format!("Blockscout request failed: {e}")))?;
+    let (page, pages_fetched) = crate::explorer::pages(&ctx.http, &url, &[], max_pages).await?;
+    let items: Vec<BlockscoutTx> = page
+        .items
+        .into_iter()
+        .map(serde_json::from_value)
+        .collect::<Result<_, _>>()
+        .map_err(|e| EvmError::explorer(format!("Invalid transaction: {e}")))?;
 
-    if !resp.status().is_success() {
-        return Err(EvmError::explorer(format!("Blockscout returned {}", resp.status())));
-    }
-
-    let data: BlockscoutResponse = resp.json().await
-        .map_err(|e| EvmError::explorer(format!("Failed to parse Blockscout response: {e}")))?;
-
-    let transactions: Vec<TxSummary> = data.items.iter().map(|tx| {
-        TxSummary {
+    let transactions: Vec<TxSummary> = items
+        .iter()
+        .map(|tx| TxSummary {
             hash: tx.hash.clone(),
+            value: tx.value.clone(),
             block: tx.block,
             timestamp: tx.timestamp.clone(),
             from: tx.from.as_ref().map(|a| a.hash.clone()).unwrap_or_default(),
-            to: tx.to.as_ref().map(|a| a.hash.clone()).unwrap_or("(create)".into()),
-            status: tx.status.clone().or(tx.result.clone()).unwrap_or("unknown".into()),
-        }
-    }).collect();
+            to: tx
+                .to
+                .as_ref()
+                .map(|a| a.hash.clone())
+                .unwrap_or("(create)".into()),
+            status: tx
+                .status
+                .clone()
+                .or(tx.result.clone())
+                .unwrap_or("unknown".into()),
+        })
+        .collect();
 
     Ok(ExplorerResult {
         address: address.to_string(),
         tx_count: transactions.len(),
         transactions,
-        explorer_url: url,
+        explorer_url: crate::rpc::provider::endpoint_label(&url),
+        pages_fetched,
+        next_page_params: page.next_page_params,
     })
 }
