@@ -6,7 +6,19 @@ A Rust CLI for EVM and native Zcash queries, transaction investigation, and cros
 
 Download a macOS or Linux binary from [Releases](https://github.com/paperfoot/onchain-cli/releases), verify its archive against `SHA256SUMS`, and put `onchain` on your PATH. Releases include Apple Silicon, Intel Mac, Linux x86-64, and Linux ARM64 builds. Linux binaries target Ubuntu 24.04 or a compatible glibc runtime; build from source on older distributions.
 
-From source, with Rust 1.94.1 or newer:
+Homebrew:
+
+```sh
+brew install paperfoot/tap/onchain
+```
+
+Cargo, with Rust 1.94.1 or newer:
+
+```sh
+cargo install --locked onchain
+```
+
+From a checkout:
 
 ```sh
 git clone https://github.com/paperfoot/onchain-cli.git
@@ -20,7 +32,17 @@ onchain update --check
 onchain update
 ```
 
-Self-update uses this repository's releases, verifies the downloaded archive checksum, and never downgrades to an older version.
+Both update commands check this repository's stable releases with a bounded request. Cargo and Homebrew installations receive the appropriate upgrade command; `update` does not overwrite package-managed files. Unknown installations receive the verified release URL. Neither command installs automatically.
+
+Agents can discover the installed command grammar without network access:
+
+```sh
+onchain agent-info
+onchain agent-info --command "zcash"
+onchain info --command "swap quote"
+```
+
+The additive discovery and update contracts follow the [agent CLI framework](https://github.com/paperfoot/agent-cli-framework/). Existing raw JSON results, errors, help, and exit codes are preserved; this is not a full framework envelope migration.
 
 Agent usage guidance is maintained in [skills/onchain/SKILL.md](skills/onchain/SKILL.md). To install it for Codex, copy that file to `~/.codex/skills/onchain/SKILL.md`.
 

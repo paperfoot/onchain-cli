@@ -20,6 +20,16 @@ async fn main() {
 
     // Handle commands that don't need RPC context
     match &cli.command {
+        Commands::AgentInfo { command } => {
+            match onchain::discovery::manifest(command.as_deref()) {
+                Ok(value) => output::json::render(&value),
+                Err(error) => {
+                    output::render_error(&error, format);
+                    process::exit(error.exit_code());
+                }
+            }
+            return;
+        }
         Commands::Swap(args) => {
             match onchain::swap::run(args).await {
                 Ok(r) => output::render(&r, format),
@@ -167,6 +177,7 @@ async fn main() {
             .await
             .map(|r| output::render(&r, format)),
         Commands::Examples
+        | Commands::AgentInfo { .. }
         | Commands::Update { .. }
         | Commands::Decode { .. }
         | Commands::Zcash(_)

@@ -35,6 +35,14 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Commands {
+    /// Describe commands as offline machine-readable JSON
+    #[command(visible_alias = "info")]
+    AgentInfo {
+        /// Select a canonical command or group, such as "zcash amount"
+        #[arg(long)]
+        command: Option<String>,
+    },
+
     /// Native Zcash node queries, exact amounts, and batched reads
     Zcash(crate::zcash::ZcashArgs),
     /// Discover assets, preview cross-chain swaps, and check status via NEAR Intents 1Click
@@ -180,9 +188,9 @@ pub enum Commands {
         address: String,
     },
 
-    /// Check for updates and self-update
+    /// Check releases and show the upgrade command for your installation
     Update {
-        /// Only check, don't install
+        /// Check the latest release without changing any installation
         #[arg(long)]
         check: bool,
     },

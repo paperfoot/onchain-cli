@@ -5,7 +5,7 @@ description: Query EVM and native Zcash chains, investigate transactions, decode
 
 # onchain
 
-Installed executable: `~/.local/bin/onchain`. Check `onchain --version` and command `--help` for the installed interface. Version 0.2 adds native Zcash and NEAR Intents 1Click previews. Piped output or `--json` returns one JSON document; a nonzero exit means failure, including provider errors. CLI parsing/help uses text.
+Use `onchain` from PATH. Check `onchain --version`; inspect a task with `onchain agent-info --command "zcash"` or `onchain info --command "swap quote"`. Discovery is offline. Version 0.2 adds native Zcash and NEAR Intents 1Click previews. Piped output or `--json` returns one JSON document; a nonzero exit means failure, including provider errors. CLI parsing/help uses text.
 
 ## Native Zcash
 
@@ -70,4 +70,4 @@ Contract signatures include input and output types, such as `name()(string)`. `t
 
 Empty bytecode or a low nonce alone does not establish ownership, intent, or account type; delegated EVM accounts can contain code. Decoded selectors may have collisions. Keep investigation conclusions tied to observed transactions.
 
-`onchain update --check` checks this repository's release; `onchain update` installs a newer checksummed binary. Documentation and releases: https://github.com/paperfoot/onchain-cli.
+`onchain update --check` checks this repository's release; `onchain update` reports an upgrade command for its Cargo/Homebrew owner, or a release URL for unknown installations. It does not replace binaries automatically. Documentation and releases: https://github.com/paperfoot/onchain-cli.

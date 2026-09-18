@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.1 — 2026-09-18
+
+- Add offline parser-derived `agent-info` / `info`, with canonical command and group filters.
+- Respect Cargo and Homebrew ownership in update instructions. Bound release lookup time and size, validate stable versions, and remove automatic binary replacement.
+- Add crates.io metadata and a reproducible four-platform Homebrew formula generator.
+- Preserve the existing raw JSON and exit-code contracts; discovery describes the installed behavior.
+
 ## 0.2.0 — 2026-09-18
 
 - Add native Zcash info, health, block, transaction, transparent balance/UTXO, mempool, batched reads, exact ZEC conversion, ZIP-317 fee calculation, and connection benchmarks.

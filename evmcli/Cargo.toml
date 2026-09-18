@@ -1,11 +1,15 @@
 [package]
 name = "onchain"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 rust-version = "1.94.1"
 description = "Fast EVM and Zcash queries, transaction investigation, and swap quotes"
 license = "MIT"
 repository = "https://github.com/paperfoot/onchain-cli"
+homepage = "https://github.com/paperfoot/onchain-cli"
+readme = "../README.md"
+keywords = ["zcash", "ethereum", "blockchain", "cli", "swaps"]
+categories = ["command-line-utilities", "cryptography::cryptocurrencies"]
 
 [[bin]]
 name = "onchain"
@@ -30,7 +34,6 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 directories = "6"
 hex = "0.4"
-self_update = { version = "1.3", default-features = false, features = ["reqwest", "rustls", "github", "compression-tar-gz", "checksums"] }
 semver = "1"
 
 [dev-dependencies]
