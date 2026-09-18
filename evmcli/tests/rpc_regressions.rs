@@ -1,4 +1,4 @@
-use onchain::commands::{abi, explorer, logs, storage, transfers};
+use onchain::commands::{abi, explorer, logs, storage, trace, transfers};
 use onchain::context::AppContext;
 use onchain::output::OutputFormat;
 use onchain::rpc::{detect, provider};
@@ -305,4 +305,55 @@ async fn explicit_rpc_rejects_a_chain_id_mismatch() {
     assert!(error
         .to_string()
         .contains("does not match selected network 42161"));
+}
+
+#[tokio::test]
+async fn explicit_trace_accepts_null_error_and_flattens_calls() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(|request: &Request| rpc_matches(request, "eth_chainId", |_| true))
+        .respond_with(|request: &Request| rpc_response(request, json!("0x1")))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(|request: &Request| {
+            rpc_matches(request, "debug_traceTransaction", |params| {
+                params[0] == hash(1)
+                    && params[1]["tracer"] == "callTracer"
+                    && params[1]["tracerConfig"]["onlyTopCall"] == false
+            })
+        })
+        .respond_with(|request: &Request| {
+            let body: Value = request.body_json().unwrap();
+            ResponseTemplate::new(200).set_body_json(json!({
+                "jsonrpc": "2.0",
+                "id": body["id"],
+                "error": null,
+                "result": {
+                    "type": "CALL", "from": SUBJECT, "to": TOKEN,
+                    "value": "0x0", "gasUsed": "0x5208", "input": "0x", "output": "0x",
+                    "calls": [{
+                        "type": "STATICCALL", "from": TOKEN, "to": OTHER,
+                        "gasUsed": "0x100", "input": "0x12345678", "output": "0xabcd"
+                    }]
+                }
+            }))
+        })
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let result = trace::run(&context(&server, "ethereum").await, &hash(1))
+        .await
+        .unwrap();
+
+    assert_eq!(result.call_count, 2);
+    assert_eq!(result.calls[0].depth, 0);
+    assert_eq!(result.calls[1].depth, 1);
+    assert_eq!(result.calls[1].call_type, "STATICCALL");
+    assert_eq!(result.calls[1].input_size, 4);
+    assert_eq!(result.calls[1].output_size, 2);
+    assert_eq!(result.rpc_endpoint, server.uri());
+    assert_eq!(server.received_requests().await.unwrap().len(), 2);
 }

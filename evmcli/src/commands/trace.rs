@@ -193,7 +193,10 @@ async fn try_trace(
         .await
         .map_err(|e| EvmError::rpc(format!("Failed to parse trace response: {e}")))?;
 
-    if trace_resp.get("error").is_some() {
+    if trace_resp
+        .get("error")
+        .is_some_and(|error| !error.is_null())
+    {
         let msg = trace_resp["error"]["message"]
             .as_str()
             .unwrap_or("unsupported");

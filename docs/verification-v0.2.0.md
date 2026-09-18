@@ -4,7 +4,7 @@ Checked on 18 September 2026 on macOS ARM64 with Rust 1.98.1.
 
 ## Deterministic checks
 
-- 36 passing tests: 17 unit, 6 EVM HTTP regressions, 7 Zcash RPC regressions, 6 swap HTTP regressions.
+- 37 passing tests: 17 unit, 7 EVM HTTP regressions, 7 Zcash RPC regressions, 6 swap HTTP regressions.
 - Workspace formatting, strict all-target Clippy, optimized release build, workflow actionlint, and Git whitespace checks pass.
 - Cargo audit: zero known vulnerabilities. Two unmaintained transitive packages remain in the resolved dependency graph (`paste`, `derivative`); the advisory check does not classify these as vulnerabilities.
 - JSON output and closed-pipe behavior checked from a subprocess.
