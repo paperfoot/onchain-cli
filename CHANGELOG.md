@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.2 — 2026-09-18
+
+- Preserve custom Cargo installation roots in upgrade commands, with shell-safe path quoting.
+
 ## 0.2.1 — 2026-09-18
 
 - Add offline parser-derived `agent-info` / `info`, with canonical command and group filters.

@@ -18,7 +18,7 @@ pub struct UpdateResult {
     pub status: &'static str,
     pub install_source: &'static str,
     pub update_mode: &'static str,
-    pub upgrade_command: Option<&'static str>,
+    pub upgrade_command: Option<String>,
     pub release_url: String,
     pub requires_skill_reinstall: bool,
 }
@@ -30,32 +30,35 @@ impl Tableable for UpdateResult {
         table.add_row(vec!["Latest", &self.latest_version]);
         table.add_row(vec!["Status", &self.message]);
         table.add_row(vec!["Installation", self.install_source]);
-        if let Some(command) = self.upgrade_command {
+        if let Some(command) = &self.upgrade_command {
             table.add_row(vec!["Upgrade", command]);
         }
         table
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 enum InstallSource {
     Homebrew,
-    Cargo,
+    Cargo(std::path::PathBuf),
     Unknown,
 }
 
 impl InstallSource {
-    fn name(self) -> &'static str {
+    fn name(&self) -> &'static str {
         match self {
             Self::Homebrew => "homebrew",
-            Self::Cargo => "cargo",
+            Self::Cargo(_) => "cargo",
             Self::Unknown => "unknown",
         }
     }
-    fn command(self) -> Option<&'static str> {
+    fn command(&self) -> Option<String> {
         match self {
-            Self::Homebrew => Some("brew upgrade paperfoot/tap/onchain"),
-            Self::Cargo => Some("cargo install --locked --force onchain"),
+            Self::Homebrew => Some("brew upgrade paperfoot/tap/onchain".into()),
+            Self::Cargo(root) => root.to_str().map(|path| {
+                let quoted = format!("'{}'", path.replace('\'', "'\"'\"'"));
+                format!("cargo install --locked --force --root {quoted} onchain")
+            }),
             Self::Unknown => None,
         }
     }
@@ -100,7 +103,7 @@ fn installation_at(executable: &Path, cargo_root: Option<&Path>) -> InstallSourc
                     })
                 });
             if owned {
-                return InstallSource::Cargo;
+                return InstallSource::Cargo(root.to_owned());
             }
         }
     }
@@ -186,7 +189,7 @@ fn result_for(latest: semver::Version, source: InstallSource, check_only: bool) 
         updated: false,
         message: if !available {
             "Already up to date".into()
-        } else if let Some(command) = command {
+        } else if let Some(command) = &command {
             format!("Update available. Run '{command}' to upgrade this installation.")
         } else {
             format!("Update available. Install the matching verified release from {REPOSITORY}/releases; installation ownership is unknown.")
@@ -226,17 +229,25 @@ mod tests {
     #[test]
     fn updates_preserve_ownership_and_never_downgrade() {
         for source in [
-            InstallSource::Cargo,
+            InstallSource::Cargo(std::path::PathBuf::from("/tmp/cargo root")),
             InstallSource::Homebrew,
             InstallSource::Unknown,
         ] {
             for check in [false, true] {
-                let result = result_for(semver::Version::parse("999.0.0").unwrap(), source, check);
+                let result = result_for(
+                    semver::Version::parse("999.0.0").unwrap(),
+                    source.clone(),
+                    check,
+                );
                 assert!(!result.updated);
                 assert_eq!(result.upgrade_command, source.command());
                 assert_eq!(result.install_source, source.name());
                 assert_ne!(result.update_mode, "self_replace");
-                let older = result_for(semver::Version::parse("0.1.0").unwrap(), source, check);
+                let older = result_for(
+                    semver::Version::parse("0.1.0").unwrap(),
+                    source.clone(),
+                    check,
+                );
                 assert_eq!(older.status, "up_to_date");
                 assert!(!older.requires_skill_reinstall);
             }
@@ -249,6 +260,21 @@ mod tests {
             installation_at(Path::new("/tmp/Cellar/onchain/0.2.1/bin/onchain"), None),
             InstallSource::Unknown
         );
+    }
+
+    #[test]
+    fn cargo_upgrade_preserves_and_quotes_custom_roots() {
+        let root = "/tmp/custom ' $(printf injected) install";
+        let source = InstallSource::Cargo(std::path::PathBuf::from(root));
+        let command = source.command().unwrap();
+        // Parse the suggestion as shell arguments without invoking Cargo.
+        let output = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(format!("set -- {command}; printf '%s' \"$6\""))
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        assert_eq!(String::from_utf8(output.stdout).unwrap(), root);
     }
 
     #[test]
@@ -280,7 +306,7 @@ mod tests {
         std::fs::write(cargo.join(".crates2.json"), r#"{"installs":{"onchain 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)":{"bins":["onchain"]}}}"#).unwrap();
         assert_eq!(
             installation_at(&executable, Some(&cargo)),
-            InstallSource::Cargo
+            InstallSource::Cargo(cargo.clone())
         );
         std::fs::write(
             cargo.join(".crates2.json"),

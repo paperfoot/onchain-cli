@@ -1,6 +1,6 @@
 [package]
 name = "onchain"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
 rust-version = "1.94.1"
 description = "Fast EVM and Zcash queries, transaction investigation, and swap quotes"
